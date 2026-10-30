@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block width %}wide{% endblock %}
+{% block content %}
+<h2>{{ t('admin_panel') }}</h2>
+<div class="stats">
+  <div class="stat"><b>{{ total }}</b>Total</div>
+  {% for s, c in counts.items() %}<div class="stat"><b>{{ c }}</b>{{ s }}</div>{% endfor %}
+  <div class="stat"><b>{{ users }}</b>Users</div>
+</div>
+<div class="filters">
+  <a href="{{ url_for('admin_dashboard') }}" class="{{ 'active' if not current }}">All</a>
+  {% for s in counts %}<a href="{{ url_for('admin_dashboard', status=s) }}" class="{{ 'active' if current==s }}">{{ s }}</a>{% endfor %}
+</div>
+<div class="table-wrap"><table>
+  <tr><th>#</th><th>Applicant</th><th>Phone</th><th>Amount</th><th>Months</th><th>Date</th><th>Status</th><th></th></tr>
+  {% for a in apps %}
+  <tr><td>{{ a.id }}</td><td>{{ a.applicant_name }}</td><td>{{ a.user.phone }}</td><td>₹{{ '{:,}'.format(a.loan_amount) }}</td>
+      <td>{{ a.repayment_months }}</td><td>{{ a.created_at.strftime('%d %b %Y') }}</td>
+      <td><span class="badge {{ a.status }}">{{ a.status }}</span></td>
+      <td><a class="btn small" href="{{ url_for('admin_application', app_id=a.id) }}">{{ t('view') }}</a></td></tr>
+  {% else %}<tr><td colspan="8">No applications.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

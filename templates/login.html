@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>{{ t('admin_login') if admin else t('login') }}</h2>
+  <form method="post">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>{{ t('email') }} / {{ t('phone') }}</label><input name="identifier" required>
+    <label>{{ t('password') }}</label><input type="password" name="password" required>
+    <br><button class="btn full">{{ t('login') }}</button>
+  </form>
+  {% if not admin %}
+    <p>{{ t('no_account') }} <a href="{{ url_for('register') }}">{{ t('register') }}</a> &nbsp;|&nbsp; <a href="{{ url_for('admin_login') }}">{{ t('admin_login') }}</a></p>
+  {% else %}
+    <p><a href="{{ url_for('login') }}">← {{ t('login') }}</a></p>
+  {% endif %}
+</div>
+{% endblock %}

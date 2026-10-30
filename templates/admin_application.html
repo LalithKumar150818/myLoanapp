@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block width %}wide{% endblock %}
+{% block content %}
+<a href="{{ url_for('admin_dashboard') }}">← Back</a>
+<div class="card" style="margin-top:12px">
+  <h2>Application #{{ a.id }} <span class="badge {{ a.status }}">{{ a.status }}</span></h2>
+  <dl>
+    <dt>Applicant</dt><dd>{{ a.applicant_name }}</dd>
+    <dt>{{ a.relation_type }}</dt><dd>{{ a.relation_name }}</dd>
+    <dt>Phone / Email</dt><dd>{{ a.user.phone }} / {{ a.user.email }}</dd>
+    <dt>Address</dt><dd style="white-space:pre-line">{{ a.address }}</dd>
+    <dt>Loan Amount</dt><dd>₹{{ '{:,}'.format(a.loan_amount) }}</dd>
+    <dt>Repayment</dt><dd>{{ a.repayment_months }} months</dd>
+    <dt>Application Fee</dt><dd>₹{{ a.fee_amount }}</dd>
+    <dt>Submitted</dt><dd>{{ a.created_at.strftime('%d %b %Y, %H:%M') }} UTC</dd>
+  </dl>
+</div>
+<div class="card">
+  <h3>Documents</h3>
+  <div class="docs">
+    {% for label, f in [('Photo', a.photo_file), ('Aadhaar', a.aadhaar_file), ('PAN', a.pan_file), ('Payment Screenshot', a.payment_file)] %}
+    <div><b>{{ label }}</b><br>
+      {% if f.endswith('.pdf') %}<a class="btn small" target="_blank" href="{{ url_for('files', name=f) }}">Open PDF</a>
+      {% else %}<a target="_blank" href="{{ url_for('files', name=f) }}"><img src="{{ url_for('files', name=f) }}" alt="{{ label }}"></a>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+<div class="card">
+  <h3>Update Status</h3>
+  <form method="post">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>Status</label>
+    <select name="status">{% for s in statuses %}<option {{ 'selected' if a.status==s }}>{{ s }}</option>{% endfor %}</select>
+    <label>{{ t('remarks') }}</label><textarea name="remarks" rows="3">{{ a.admin_remarks }}</textarea>
+    <br><button class="btn">Save</button>
+  </form>
+</div>
+{% endblock %}

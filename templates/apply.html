@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>{{ t('apply_now') }}</h2>
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>{{ t('full_name') }}</label>
+    <input name="applicant_name" value="{{ form.get('applicant_name', user.name) }}" required>
+
+    <label>{{ t('relation_name') }}</label>
+    <div class="row">
+      <select name="relation_type" class="narrow" required>
+        {% for r in ['S/o','D/o','W/o'] %}<option {{ 'selected' if form.get('relation_type')==r }}>{{ r }}</option>{% endfor %}
+      </select>
+      <input name="relation_name" value="{{ form.get('relation_name','') }}" required>
+    </div>
+
+    <label>{{ t('address') }}</label>
+    <textarea name="address" rows="3" required>{{ form.get('address','') }}</textarea>
+
+    <div class="row">
+      <div><label>{{ t('loan_amount') }}</label><input type="number" name="loan_amount" min="1000" max="1000000" value="{{ form.get('loan_amount','') }}" required></div>
+      <div><label>{{ t('repayment_months') }}</label><input type="number" name="repayment_months" min="1" max="60" value="{{ form.get('repayment_months','') }}" required></div>
+    </div>
+
+    <label>{{ t('upload_aadhaar') }} (JPG/PNG/PDF)</label><input type="file" name="aadhaar" accept=".jpg,.jpeg,.png,.pdf" required>
+    <label>{{ t('upload_pan') }} (JPG/PNG/PDF)</label><input type="file" name="pan" accept=".jpg,.jpeg,.png,.pdf" required>
+    <label>{{ t('upload_photo') }} (JPG/PNG)</label><input type="file" name="photo" accept=".jpg,.jpeg,.png" required>
+
+    <div class="fee-box">
+      <div>{{ t('application_fee') }}</div>
+      <div class="amt">₹{{ fee }}/-</div>
+      {% if qr %}
+        <p>{{ t('scan_qr') }}</p>
+        <img src="{{ url_for('qr_image') }}" alt="QR">
+      {% else %}
+        <p>{{ t('no_qr') }}</p>
+      {% endif %}
+    </div>
+
+    <label>{{ t('after_payment') }} — {{ t('upload_screenshot') }}</label>
+    <input type="file" name="payment" accept=".jpg,.jpeg,.png" required>
+
+    <label>{{ t('conditions') }}</label>
+    <div class="cond">{{ conditions }}</div>
+    <label style="margin-top:12px"><input type="checkbox" name="agree" value="1" required> {{ t('agree') }}</label>
+
+    <br><button class="btn full">{{ t('submit') }}</button>
+  </form>
+</div>
+{% endblock %}
