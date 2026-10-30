@@ -1,23 +1,70 @@
-# Loan Mobile App (Flask)
+# Project Name
 
-## Run in VS Code
+## 1. Project Overview
+Provide a detailed introduction to the website, its purpose, and the problem it solves.
+
+## 2. Project Objectives
+- Develop a user-friendly website.
+- Provide responsive design across devices.
+- Implement the required functionalities.
+- Build a maintainable and scalable application.
+
+## 3. Features
+- Responsive user interface
+- User-friendly navigation
+- Interactive components
+- Secure and reliable functionality
+- Mobile and desktop compatibility
+
+## 4. Technologies Used
+List the actual frontend, backend, database, APIs, and development tools used in this project.
+
+## 5. Project Structure
+Explain the purpose of important folders and files.
+
+## 6. Installation and Setup
+
+### Prerequisites
+- Git
+- Node.js (if applicable)
+- npm (if applicable)
+
+### Clone Repository
+```bash
+git clone YOUR_REPOSITORY_URL
 ```
-python -m venv venv
-venv\Scripts\activate        # Windows   (Mac/Linux: source venv/bin/activate)
-pip install -r requirements.txt
-python app.py
+
+### Navigate to Project
+```bash
+cd YOUR_PROJECT_FOLDER
 ```
-Open http://127.0.0.1:5000
 
-## Logins
-- Users: /register then /login
-- Admin: /admin/login  -> email `admin@loanapp.com`, password `Admin@12345`
-  (auto-created on first run. CHANGE IT: set env vars ADMIN_EMAIL / ADMIN_PASSWORD before the FIRST run,
-  or delete loan.db and re-run.)
+### Install Dependencies
+```bash
+npm install
+```
 
-## Admin first steps
-Admin Panel -> gear icon (Settings): upload payment QR code, set application fee, edit conditions.
+### Run the Application
+```bash
+npm run dev
+```
 
-## Production notes
-- Set SECRET_KEY env var, run behind HTTPS with gunicorn/waitress, set debug off.
-- Uploads are stored in /uploads (not publicly served; only the owner/admin can open them).
+Replace these commands according to the actual project configuration.
+
+## 7. How the Project Works
+Explain the complete application workflow, major components, and interactions.
+
+## 8. Screenshots
+Add screenshots of the website's important pages and features.
+
+## 9. Challenges and Solutions
+Document the technical challenges encountered during development and how they were resolved.
+
+## 10. Future Enhancements
+List planned improvements and additional features.
+
+## 11. Author
+Your Name
+
+## 12. License
+Specify the project's license, if applicable.
