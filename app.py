@@ -14,14 +14,23 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from translations import LANGS, TRANSLATIONS
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+IS_PRODUCTION = (
+    os.environ.get("RENDER") == "true"
+    or os.environ.get("APP_ENV", "").lower() == "production"
+    or os.environ.get("FLASK_ENV", "").lower() == "production"
+    or bool(os.environ.get("DATABASE_URL") and os.environ.get("DATABASE_URL", "").startswith(("postgres://", "postgresql://", "postgresql+psycopg://")))
+)
 
 # ---------- Config ----------
 def load_secret_key():
     env = os.environ.get("SECRET_KEY")
     if env:
         return env
+    if IS_PRODUCTION:
+        raise RuntimeError("SECRET_KEY must be configured in production")
     path = os.path.join(BASE_DIR, "secret.key")
     if not os.path.exists(path):
         with open(path, "w") as f:
@@ -29,13 +38,28 @@ def load_secret_key():
     with open(path) as f:
         return f.read().strip()
 
+
+def load_database_url():
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        return "sqlite:///" + os.path.join(BASE_DIR, "loan.db")
+    if database_url.startswith("postgres://"):
+        return "postgresql+psycopg://" + database_url[len("postgres://"):]
+    if database_url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + database_url[len("postgresql://"):]
+    return database_url
+
+
 app = Flask(__name__)
 app.config.update(
     SECRET_KEY=load_secret_key(),
-    SQLALCHEMY_DATABASE_URI="sqlite:///" + os.path.join(BASE_DIR, "loan.db"),
+    SQLALCHEMY_DATABASE_URI=load_database_url(),
+    SQLALCHEMY_TRACK_MODIFICATIONS=False,
+    SQLALCHEMY_ENGINE_OPTIONS={"pool_pre_ping": True},
     MAX_CONTENT_LENGTH=25 * 1024 * 1024,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=(os.environ.get("SESSION_COOKIE_SECURE", "true" if IS_PRODUCTION else "false").lower() == "true"),
 )
 db = SQLAlchemy(app)
 
@@ -105,13 +129,18 @@ def init_db():
         set_setting("fee", "36")
     if not get_setting("conditions"):
         set_setting("conditions", DEFAULT_CONDITIONS)
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@loanapp.com").lower()
     if not User.query.filter_by(is_admin=True).first():
-        admin_pw = os.environ.get("ADMIN_PASSWORD", "Admin@12345")
+        if IS_PRODUCTION:
+            admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+            admin_password = os.environ.get("ADMIN_PASSWORD")
+            if not admin_email or not admin_password:
+                raise RuntimeError("ADMIN_EMAIL and ADMIN_PASSWORD must be configured before creating a production admin")
+        else:
+            admin_email = os.environ.get("ADMIN_EMAIL", "admin@loanapp.local").strip().lower()
+            admin_password = os.environ.get("ADMIN_PASSWORD", "LocalAdmin!12345")
         db.session.add(User(name="Administrator", phone="0000000000", email=admin_email,
-                            password_hash=generate_password_hash(admin_pw), is_admin=True))
+                            password_hash=generate_password_hash(admin_password), is_admin=True))
         db.session.commit()
-        print(f"\n*** Admin created -> email: {admin_email}  password: {admin_pw}  (CHANGE THIS!) ***\n")
 
 # ---------- Helpers ----------
 @app.before_request
@@ -403,4 +432,4 @@ with app.app_context():
     init_db()
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=not IS_PRODUCTION)
