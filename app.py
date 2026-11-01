@@ -92,6 +92,8 @@ class User(db.Model):
     must_change_password = db.Column(db.Boolean, default=False, nullable=False)
     temp_password_expires_at = db.Column(db.DateTime, nullable=True)
     address = db.Column(db.Text, nullable=True)
+    aadhaar_number = db.Column(db.String(12), nullable=True)
+    pan_number = db.Column(db.String(10), nullable=True)
     profile_completed = db.Column(db.Boolean, default=False, nullable=False)
     registration_fee_paid = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -197,6 +199,8 @@ def ensure_database_columns():
                 connection.exec_driver_sql("UPDATE user SET country_code = CASE WHEN substr(phone, 1, 3) = '+91' THEN '+91' ELSE country_code END")
             for column, definition in (
                 ("address", "TEXT"),
+                ("aadhaar_number", "VARCHAR(12)"),
+                ("pan_number", "VARCHAR(10)"),
                 ("profile_completed", "BOOLEAN DEFAULT 0 NOT NULL"),
                 ("registration_fee_paid", "BOOLEAN DEFAULT 0 NOT NULL"),
             ):
@@ -219,6 +223,8 @@ def ensure_database_columns():
                 connection.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN country_code VARCHAR(5)")
             for column, definition in (
                 ("address", "TEXT"),
+                ("aadhaar_number", "VARCHAR(12)"),
+                ("pan_number", "VARCHAR(10)"),
                 ("profile_completed", "BOOLEAN DEFAULT FALSE NOT NULL"),
                 ("registration_fee_paid", "BOOLEAN DEFAULT FALSE NOT NULL"),
             ):
@@ -521,9 +527,13 @@ def forgot_password():
         phone = request.form.get("phone", "").strip()
         password = request.form.get("password", "")
         confirm_password = request.form.get("confirm_password", "")
+        reset_attempts = session.get("forgot_password_attempts", 0) + 1
+        session["forgot_password_attempts"] = reset_attempts
         customer = User.query.filter(db.func.lower(User.email) == email, User.is_admin == False).first()
         if not customer or not phone_digits_match(customer.phone, phone):
             flash("No account found with this email.", "error")
+        elif reset_attempts > 5:
+            flash("Too many reset attempts. Please try again later.", "error")
         elif password != confirm_password:
             flash("Passwords do not match.", "error")
         elif len(password) < 6:
@@ -533,6 +543,7 @@ def forgot_password():
             customer.must_change_password = False
             customer.temp_password_expires_at = None
             db.session.commit()
+            session.pop("forgot_password_attempts", None)
             flash("Password updated successfully", "success")
             return redirect(url_for("login"))
     return render_template("forgot_password.html", form=request.form if request.method == "POST" else {})
@@ -582,7 +593,63 @@ def dashboard():
     if g.user.is_admin:
         return redirect(url_for("admin_dashboard"))
     apps_ = Application.query.filter_by(user_id=g.user.id).order_by(Application.created_at.desc()).all()
-    return render_template("dashboard.html", apps=apps_)
+    profile_values = {
+        "name": g.user.name,
+        "phone": display_customer_phone(g.user.phone),
+        "email": g.user.email,
+        "address": g.user.address,
+        "aadhaar_number": g.user.aadhaar_number,
+        "pan_number": g.user.pan_number,
+    }
+    return render_template("dashboard.html", apps=apps_, edit_field=request.args.get("edit"),
+                           profile_values=profile_values)
+
+
+@app.route("/profile/<field>", methods=["POST"])
+@login_required
+def update_profile(field):
+    if g.user.is_admin or field not in {"name", "phone", "email", "address", "aadhaar_number", "pan_number"}:
+        abort(404)
+    value = request.form.get("value", "").strip()
+    field_errors = None
+    if field == "name" and len(value) < 2:
+        field_errors = "Please enter your full name."
+    elif field == "email":
+        value = value.lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+            field_errors = "Enter a valid email address."
+        elif User.query.filter(User.id != g.user.id, db.func.lower(User.email) == value).first():
+            field_errors = "Another customer uses this email."
+    elif field == "phone":
+        country_code = normalize_country_code(request.form.get("country_code", g.user.country_code or "+91"))
+        national_phone = normalize_national_phone(value, country_code or "+91")
+        value = (country_code + national_phone) if country_code and national_phone else None
+        if not value:
+            field_errors = "Enter a valid mobile number."
+        elif User.query.filter(User.id != g.user.id, or_(User.phone == value, User.phone == national_phone)).first():
+            field_errors = "Another customer uses this mobile number."
+    elif field == "address" and len(value) < 10:
+        field_errors = "Please enter your full address."
+    elif field == "aadhaar_number":
+        value = re.sub(r"\s", "", value)
+        if not re.fullmatch(r"\d{12}", value):
+            field_errors = "Aadhaar number must contain 12 digits."
+    elif field == "pan_number":
+        value = value.upper()
+        if not re.fullmatch(r"[A-Z]{5}\d{4}[A-Z]", value):
+            field_errors = "Enter a valid PAN number."
+    if field_errors:
+        flash(field_errors, "error")
+    else:
+        if field == "phone":
+            g.user.phone = value
+            g.user.country_code = country_code
+        else:
+            setattr(g.user, field, value)
+        g.user.profile_completed = True
+        db.session.commit()
+        flash("Profile detail updated.", "success")
+    return redirect(url_for("dashboard"))
 
 
 def application_reference(application_id):
@@ -890,6 +957,13 @@ def admin_dashboard():
 def admin_register_customers():
     generated_password = None
     generated_customer = None
+    displayed_password = session.pop("temporary_password_to_display", None)
+    displayed_customer_id = session.pop("temporary_password_customer_id", None)
+    if displayed_password and displayed_customer_id:
+        generated_password = displayed_password
+        generated_customer = db.session.get(User, displayed_customer_id)
+        if generated_customer is None:
+            generated_password = generated_customer = None
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         submitted_phone = request.form.get("phone", "").strip()
@@ -1044,6 +1118,8 @@ def admin_share_customer_password(user_id):
         customer.must_change_password = True
         customer.temp_password_expires_at = datetime.utcnow() + timedelta(hours=24)
         db.session.commit()
+        session["temporary_password_to_display"] = password
+        session["temporary_password_customer_id"] = customer.id
         session["temporary_password_last_request"] = now_epoch
         flash(f"Temporary password sent to {customer.email}.", "success")
     except (RuntimeError, smtplib.SMTPException, OSError, ValueError, SQLAlchemyError):

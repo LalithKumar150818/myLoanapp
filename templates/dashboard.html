@@ -3,6 +3,37 @@
 {% block content %}
 <div class="card">
   <h2>{{ t('dashboard') }}</h2>
+  <h3>Saved Profile Details</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Customer Detail</th><th>Value</th><th>Action</th></tr>
+    {% for field, label in [('name','Full Name'),('phone','Mobile Number'),('email','Email Address'),('address','Address'),('aadhaar_number','Aadhaar Details'),('pan_number','PAN Details')] %}
+    <tr>
+      <td>{{ label }}</td>
+      {% if edit_field == field %}
+      <td colspan="2">
+        <form method="post" action="{{ url_for('update_profile', field=field) }}" class="profile-edit-form">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          {% if field == 'phone' %}
+          <select name="country_code" class="narrow">
+            {% for country, code in country_choices %}<option value="{{ code }}" {% if code == (user.country_code or '+91') %}selected{% endif %}>{{ code }}</option>{% endfor %}
+          </select>
+          <input name="value" value="{{ user.phone[(user.country_code or '+91')|length:] if user.phone.startswith(user.country_code or '+91') else user.phone }}" required>
+          {% elif field == 'address' %}<textarea name="value" required>{{ user.address or '' }}</textarea>
+          {% elif field == 'email' %}<input type="email" name="value" value="{{ user.email }}" required>
+          {% elif field == 'aadhaar_number' %}<input name="value" value="{{ user.aadhaar_number or '' }}" pattern="[0-9]{12}" maxlength="12" required>
+          {% elif field == 'pan_number' %}<input name="value" value="{{ user.pan_number or '' }}" pattern="[A-Za-z]{5}[0-9]{4}[A-Za-z]{1}" maxlength="10" required>
+          {% else %}<input name="value" value="{{ user.name }}" required>{% endif %}
+          <button class="btn small" type="submit">Save</button>
+          <a class="btn small secondary" href="{{ url_for('dashboard') }}">Cancel</a>
+        </form>
+      </td>
+      {% else %}
+      <td>{{ profile_values[field] or 'Not provided' }}</td>
+      <td><a class="btn small" href="{{ url_for('dashboard', edit=field) }}">Edit</a></td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </table></div>
   <div class="stats customer-stats">
     <div class="stat"><b>{{ apps|length }}</b>Total Loan Applications</div>
     <div class="stat"><b>{{ apps|selectattr('status', 'equalto', 'Pending')|list|length }}</b>Pending</div>

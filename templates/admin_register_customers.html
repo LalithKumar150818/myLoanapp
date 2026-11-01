@@ -2,6 +2,16 @@
 {% block width %}wide{% endblock %}
 {% block content %}
 <a href="{{ url_for('admin_dashboard') }}">← {{ t('admin_panel') }}</a>
+{% if generated_password and generated_customer %}
+<div class="card temporary-password-result" style="margin-top:12px">
+  <h3>Temporary Password for {{ generated_customer.name }}</h3>
+  <p>Share this password with the customer. It expires in 24 hours.</p>
+  <div class="row">
+    <input id="generated-temporary-password" type="text" value="{{ generated_password }}" readonly aria-label="Generated temporary password">
+    <button type="button" class="btn" id="copy-temporary-password">Copy Password</button>
+  </div>
+</div>
+{% endif %}
 <div class="card" style="margin-top:12px">
   <h2>{{ t('register_customer') }}</h2>
   <form method="post" class="admin-form">
@@ -70,6 +80,19 @@ document.querySelectorAll('.temporary-password-form').forEach(function (form) {
     button.textContent = 'Sending...';
   });
 });
+var copyTemporaryPassword = document.getElementById('copy-temporary-password');
+if (copyTemporaryPassword) {
+  copyTemporaryPassword.addEventListener('click', async function () {
+    var password = document.getElementById('generated-temporary-password').value;
+    try {
+      await navigator.clipboard.writeText(password);
+    } catch (error) {
+      document.getElementById('generated-temporary-password').select();
+      document.execCommand('copy');
+    }
+    copyTemporaryPassword.textContent = 'Copied';
+  });
+}
 </script>
 {% if whatsapp_url %}
 <script>window.open({{ whatsapp_url|tojson }}, "_blank");</script>

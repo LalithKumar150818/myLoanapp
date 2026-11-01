@@ -2,6 +2,8 @@
 -- Existing rows are preserved. Run once against PostgreSQL.
 
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS aadhaar_number VARCHAR(12);
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS pan_number VARCHAR(10);
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS profile_completed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS registration_fee_paid BOOLEAN NOT NULL DEFAULT FALSE;
 
