@@ -2,6 +2,7 @@ import os
 import shutil
 import tempfile
 import io
+from unittest.mock import patch
 
 import pytest
 
@@ -194,7 +195,7 @@ def test_customer_dashboard_only_lists_their_application(app_instance, client):
 def test_registration_phone_shows_fixed_country_code(client):
     response = client.get("/register")
     assert b"+91" in response.data
-    assert b'name="country_code"' not in response.data
+    assert b'name="country_code"' in response.data
 
 
 def test_admin_can_upload_qr_and_payment_page_is_fixed_at_36(app_instance, client):
@@ -318,3 +319,67 @@ def test_payment_verification_and_application_status(app_instance, client):
     with app_instance.app_context():
         assert application.db.session.get(application.Application, loan_id).status == "Approved"
         assert application.db.session.get(application.Payment, payment_id).status == "Verified"
+
+
+def test_share_temporary_password_only_changes_password_after_email(app_instance, client):
+    with app_instance.app_context():
+        admin = application.User(name="Mail Admin", phone="9444444444", email="mail.admin@example.com",
+                                 password_hash=application.generate_password_hash("AdminPassword123!"), is_admin=True)
+        customer = application.User(name="Mail Customer", phone="9555555555", email="mail.customer@example.com",
+                                    password_hash=application.generate_password_hash("ExistingPassword123!"))
+        application.db.session.add_all([admin, customer])
+        application.db.session.commit()
+        admin_id, customer_id = admin.id, customer.id
+
+    with client.session_transaction() as test_session:
+        test_session["uid"] = admin_id
+    token = csrf_token(client)
+    with patch.object(application, "send_temporary_password_email", return_value=None) as send_email:
+        response = client.post("/admin/customers/%d/share" % customer_id, data={"_csrf": token})
+    assert response.status_code == 302
+    assert send_email.call_count == 1
+    sent_customer, sent_password = send_email.call_args.args
+    assert sent_password not in response.data.decode("utf-8")
+    with app_instance.app_context():
+        assert application.check_password_hash(
+            application.db.session.get(application.User, customer_id).password_hash, sent_password
+        )
+
+
+def test_share_temporary_password_failure_preserves_existing_password(app_instance, client):
+    with app_instance.app_context():
+        admin = application.User(name="Mail Admin", phone="9666666666", email="mail.failure.admin@example.com",
+                                 password_hash=application.generate_password_hash("AdminPassword123!"), is_admin=True)
+        customer = application.User(name="Mail Customer", phone="9777777777", email="mail.failure.customer@example.com",
+                                    password_hash=application.generate_password_hash("ExistingPassword123!"))
+        application.db.session.add_all([admin, customer])
+        application.db.session.commit()
+        admin_id, customer_id, original_hash = admin.id, customer.id, customer.password_hash
+
+    with client.session_transaction() as test_session:
+        test_session["uid"] = admin_id
+    token = csrf_token(client)
+    with patch.object(application, "send_temporary_password_email",
+                      side_effect=application.smtplib.SMTPAuthenticationError(535, b"authentication failed")):
+        response = client.post("/admin/customers/%d/share" % customer_id, data={"_csrf": token})
+    assert response.status_code == 302
+    with application.app.app_context():
+        preserved = application.db.session.get(application.User, customer_id)
+        assert preserved.password_hash == original_hash
+        assert preserved.must_change_password is False
+
+
+def test_expired_temporary_password_is_rejected(app_instance, client):
+    with app_instance.app_context():
+        user = application.User(name="Expired Customer", phone="9888888888", email="expired@example.com",
+                                password_hash=application.generate_password_hash("Temporary123!"),
+                                must_change_password=True,
+                                temp_password_expires_at=application.datetime.utcnow() - application.timedelta(hours=1))
+        application.db.session.add(user)
+        application.db.session.commit()
+
+    token = csrf_token(client)
+    response = client.post("/login", data={
+        "_csrf": token, "identifier": "expired@example.com", "password": "Temporary123!"
+    })
+    assert b"Temporary password has expired" in response.data

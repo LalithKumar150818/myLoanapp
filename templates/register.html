@@ -9,8 +9,10 @@
 
     <label for="phone">{{ t('phone') }}</label>
     <div class="phone-input">
-      <span class="country-code" aria-hidden="true">+91</span>
-      <input id="phone" name="phone" type="tel" class="{{ 'field-error' if field_errors.get('phone') }}" inputmode="numeric" autocomplete="tel-national" pattern="[0-9]{10}" maxlength="10" placeholder="9876543210" value="{{ form.get('phone','') }}" required>
+      <select id="country-code" name="country_code" class="country-select" aria-label="Country code" title="Search by typing a country name">
+        {% for country, code in country_choices %}<option value="{{ code }}" {% if code == form.get('country_code', '+91') %}selected{% endif %}>{{ country }} {{ code }}</option>{% endfor %}
+      </select>
+      <input id="phone" name="phone" type="tel" class="{{ 'field-error' if field_errors.get('phone') }}" inputmode="numeric" autocomplete="tel-national" pattern="[0-9]{7,15}" maxlength="15" placeholder="9876543210" value="{{ form.get('phone','') }}" required>
     </div>
 
     <label for="email">{{ t('email') }}</label>

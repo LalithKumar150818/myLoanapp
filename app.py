@@ -3,6 +3,8 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta
+import smtplib
+from email.message import EmailMessage
 from functools import wraps
 from urllib.parse import quote
 
@@ -11,6 +13,7 @@ from flask import (Flask, abort, flash, g, redirect, render_template, request,
                    send_from_directory, session, url_for)
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import or_
+from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from translations import LANGS, TRANSLATIONS
@@ -81,6 +84,7 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
     phone = db.Column(db.String(15), unique=True, nullable=False)
+    country_code = db.Column(db.String(5), nullable=True, default="+91")
     email = db.Column(db.String(150), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
@@ -162,6 +166,9 @@ def ensure_database_columns():
                 connection.exec_driver_sql("ALTER TABLE user ADD COLUMN must_change_password BOOLEAN DEFAULT 0 NOT NULL")
             if user_columns and "temp_password_expires_at" not in user_columns:
                 connection.exec_driver_sql("ALTER TABLE user ADD COLUMN temp_password_expires_at DATETIME")
+            if user_columns and "country_code" not in user_columns:
+                connection.exec_driver_sql("ALTER TABLE user ADD COLUMN country_code VARCHAR(5)")
+                connection.exec_driver_sql("UPDATE user SET country_code = CASE WHEN substr(phone, 1, 3) = '+91' THEN '+91' ELSE country_code END")
             connection.commit()
         else:
             from sqlalchemy import inspect
@@ -170,6 +177,8 @@ def ensure_database_columns():
                 connection.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE NOT NULL")
             if "temp_password_expires_at" not in existing_user_columns:
                 connection.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN temp_password_expires_at TIMESTAMP")
+            if "country_code" not in existing_user_columns:
+                connection.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN country_code VARCHAR(5)")
             connection.commit()
 
 
@@ -218,6 +227,32 @@ def normalize_indian_mobile(value):
     return phone if re.fullmatch(r"[6-9]\d{9}", phone) else None
 
 
+COUNTRY_CODES = [
+    ("India", "+91"), ("United States", "+1"), ("United Kingdom", "+44"),
+    ("Australia", "+61"), ("Bangladesh", "+880"), ("Brazil", "+55"),
+    ("Canada", "+1"), ("China", "+86"), ("France", "+33"), ("Germany", "+49"),
+    ("Indonesia", "+62"), ("Ireland", "+353"), ("Italy", "+39"), ("Japan", "+81"),
+    ("Malaysia", "+60"), ("Nepal", "+977"), ("Netherlands", "+31"),
+    ("New Zealand", "+64"), ("Nigeria", "+234"), ("Pakistan", "+92"),
+    ("Philippines", "+63"), ("Saudi Arabia", "+966"), ("Singapore", "+65"),
+    ("South Africa", "+27"), ("South Korea", "+82"), ("Spain", "+34"),
+    ("Sri Lanka", "+94"), ("UAE", "+971"), ("UAE", "+971"), ("Vietnam", "+84"),
+]
+
+
+def normalize_country_code(value):
+    code = "+" + re.sub(r"\D", "", value or "")
+    return code if any(code == dialing_code for _, dialing_code in COUNTRY_CODES) else None
+
+
+def normalize_national_phone(value, country_code="+91"):
+    digits = re.sub(r"\D", "", value or "")
+    dialing_digits = country_code.lstrip("+")
+    if digits.startswith(dialing_digits) and len(digits) > len(dialing_digits):
+        digits = digits[len(dialing_digits):]
+    return digits if digits.isdigit() and 7 <= len(digits) <= 15 else None
+
+
 @app.before_request
 def before():
     uid = session.get("uid")
@@ -249,7 +284,7 @@ def inject():
         return TRANSLATIONS.get(lang, {}).get(key) or TRANSLATIONS["en"].get(key, key)
 
     return dict(t=t, csrf_token=session["_csrf"], user=g.user, lang=lang, LANGS=LANGS,
-                now=datetime.utcnow())
+                now=datetime.utcnow(), country_choices=COUNTRY_CODES)
 
 
 def login_required(f):
@@ -274,7 +309,7 @@ def admin_required(f):
 def generate_temporary_password():
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*"
     while True:
-        password = "".join(secrets.choice(alphabet) for _ in range(10))
+        password = "".join(secrets.choice(alphabet) for _ in range(16))
         if (any(char.islower() for char in password)
                 and any(char.isupper() for char in password)
                 and any(char.isdigit() for char in password)
@@ -290,6 +325,11 @@ def normalize_customer_phone(value):
 
 
 def display_customer_phone(phone):
+    if phone and phone.startswith("+"):
+        matched = sorted({code for _, code in COUNTRY_CODES}, key=len, reverse=True)
+        for code in matched:
+            if phone.startswith(code):
+                return f"{code} {phone[len(code):]}"
     normalized = normalize_customer_phone(phone)
     return "+91 " + normalized if normalized else phone
 
@@ -330,9 +370,9 @@ def register():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         submitted_phone = request.form.get("phone", "").strip()
-        phone = normalize_e164(submitted_phone, "+91")
-        if phone and not normalize_indian_mobile(phone):
-            phone = None
+        country_code = normalize_country_code(request.form.get("country_code", "+91"))
+        national_phone = normalize_national_phone(submitted_phone, country_code or "+91")
+        phone = (country_code or "+91") + national_phone if country_code and national_phone else None
         email = request.form.get("email", "").strip().lower()
         pw = request.form.get("password", "")
         pw2 = request.form.get("confirm_password", "")
@@ -347,7 +387,7 @@ def register():
             field_errors["password"] = "Password must be at least 8 characters."
         if pw != pw2:
             field_errors["confirm_password"] = "Passwords do not match."
-        legacy_phone = phone[3:] if phone and phone.startswith("+91") else phone
+        legacy_phone = phone[len(country_code):] if phone and country_code else phone
         existing_phone_candidates = [phone, legacy_phone]
         if phone and User.query.filter(or_(User.email == email, User.phone.in_(existing_phone_candidates))).first():
             field_errors.setdefault("email", "An account with this email or phone already exists.")
@@ -355,7 +395,8 @@ def register():
             for message in field_errors.values():
                 flash(message, "error")
             return render_template("register.html", form=request.form, field_errors=field_errors)
-        u = User(name=name, phone=phone, email=email, password_hash=generate_password_hash(pw))
+        u = User(name=name, phone=phone, country_code=country_code, email=email,
+                 password_hash=generate_password_hash(pw))
         db.session.add(u)
         db.session.commit()
         session.clear()
@@ -568,7 +609,9 @@ def admin_register_customers():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         submitted_phone = request.form.get("phone", "").strip()
-        phone = normalize_customer_phone(submitted_phone)
+        country_code = normalize_country_code(request.form.get("country_code", "+91"))
+        national_phone = normalize_national_phone(submitted_phone, country_code or "+91")
+        phone = (country_code + national_phone) if country_code and national_phone else None
         email = request.form.get("email", "").strip().lower()
         if len(name) < 2:
             flash("Customer name must be at least 2 characters.", "error")
@@ -576,12 +619,12 @@ def admin_register_customers():
             flash("Enter a valid Indian mobile number.", "error")
         elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
             flash("Enter a valid email address.", "error")
-        elif User.query.filter(or_(User.email == email, User.phone.in_([phone, "+91" + phone, "91" + phone]))).first():
+        elif User.query.filter(or_(User.email == email, User.phone.in_([phone, national_phone]))).first():
             flash("A customer with this email or phone already exists.", "error")
         else:
             generated_password = generate_temporary_password()
             generated_customer = User(
-                name=name, phone=phone, email=email,
+                name=name, phone=phone, country_code=country_code, email=email,
                 password_hash=generate_password_hash(generated_password),
                 is_admin=False, must_change_password=True,
                 temp_password_expires_at=datetime.utcnow() + timedelta(hours=24),
@@ -609,7 +652,9 @@ def admin_edit_customer(user_id):
     if customer is None or customer.is_admin:
         abort(404)
     name = request.form.get("name", "").strip()
-    phone = normalize_customer_phone(request.form.get("phone", ""))
+    country_code = normalize_country_code(request.form.get("country_code", customer.country_code or "+91"))
+    national_phone = normalize_national_phone(request.form.get("phone", ""), country_code or "+91")
+    phone = (country_code + national_phone) if country_code and national_phone else None
     email = request.form.get("email", "").strip().lower()
     if len(name) < 2:
         flash("Customer name must be at least 2 characters.", "error")
@@ -617,11 +662,12 @@ def admin_edit_customer(user_id):
         flash("Enter a valid Indian mobile number.", "error")
     elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         flash("Enter a valid email address.", "error")
-    elif User.query.filter(User.id != customer.id, or_(User.email == email, User.phone.in_([phone, "+91" + phone, "91" + phone]))).first():
+    elif User.query.filter(User.id != customer.id, or_(User.email == email, User.phone.in_([phone, national_phone]))).first():
         flash("Another customer uses this email or phone.", "error")
     else:
         customer.name = name
         customer.phone = phone
+        customer.country_code = country_code
         customer.email = email
         db.session.commit()
         flash("Customer details updated.", "success")
@@ -645,55 +691,81 @@ def admin_delete_customer(user_id):
 
 
 def assign_temporary_password(customer):
-    password = generate_temporary_password()
-    customer.password_hash = generate_password_hash(password)
-    customer.must_change_password = True
-    customer.temp_password_expires_at = datetime.utcnow() + timedelta(hours=24)
-    db.session.commit()
-    return password
+    return generate_temporary_password()
 
 
-@app.route("/admin/customers/<int:user_id>/generate-password", methods=["POST"])
-@login_required
-@admin_required
-def admin_generate_customer_password(user_id):
-    customer = db.session.get(User, user_id)
-    if customer is None or customer.is_admin:
-        abort(404)
-    password = assign_temporary_password(customer)
-    customers = User.query.filter_by(is_admin=False).order_by(User.created_at.desc()).all()
-    return render_template(
-        "admin_register_customers.html", customers=customers, form=request.form,
-        generated_password=password, generated_customer=customer,
-        edit_customer=None, display_phone=display_customer_phone,
+def send_temporary_password_email(customer, password):
+    smtp_host = os.environ.get("MAIL_SERVER", os.environ.get("SMTP_HOST", "")).strip()
+    smtp_port = int(os.environ.get("MAIL_PORT", os.environ.get("SMTP_PORT", "587")))
+    smtp_user = os.environ.get("MAIL_USERNAME", os.environ.get("SMTP_USERNAME", "")).strip()
+    smtp_password = os.environ.get("MAIL_PASSWORD", os.environ.get("SMTP_PASSWORD", ""))
+    sender = os.environ.get("MAIL_DEFAULT_SENDER", os.environ.get("SMTP_FROM", smtp_user)).strip()
+    use_tls = os.environ.get(
+        "MAIL_USE_TLS", os.environ.get("SMTP_USE_TLS", "true")
+    ).lower() == "true"
+    login_url = request.host_url.rstrip("/") + url_for("login")
+
+    if not smtp_host or not sender:
+        raise RuntimeError("Email sharing is not configured.")
+    if not smtp_user or not smtp_password:
+        raise RuntimeError("Email authentication is not configured.")
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", customer.email or ""):
+        raise RuntimeError("The customer has no valid email address.")
+
+    message = EmailMessage()
+    message["Subject"] = "Your temporary login password"
+    message["From"] = sender
+    message["To"] = customer.email
+    latest_application = Application.query.filter_by(user_id=customer.id).order_by(Application.created_at.desc()).first()
+    reference = f"LA-{latest_application.id}" if latest_application else f"Customer-{customer.id}"
+    message.set_content(
+        f"Hello {customer.name},\n\n"
+        f"Your temporary password is: {password}\n"
+        "This password is valid for 24 hours only.\n"
+        f"Login with this email: {customer.email}\n"
+        f"Login URL: {login_url}\n\n"
+        "For your security, change this password after logging in."
+        f"\nAccount reference: {reference}"
     )
+
+    server = smtplib.SMTP(smtp_host, smtp_port, timeout=20)
+    try:
+        if use_tls:
+            server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.send_message(message)
+    finally:
+        server.quit()
 
 
 @app.route("/admin/customers/<int:user_id>/share", methods=["POST"])
+@app.route("/admin/customers/<int:user_id>/generate-password", methods=["POST"])
 @login_required
 @admin_required
 def admin_share_customer_password(user_id):
     customer = db.session.get(User, user_id)
     if customer is None or customer.is_admin:
         abort(404)
+
+    now_epoch = datetime.utcnow().timestamp()
+    last_request = session.get("temporary_password_last_request")
+    if last_request and now_epoch - float(last_request) < 30:
+        flash("Please wait before sending another temporary password.", "error")
+        return redirect(url_for("admin_register_customers"))
+
     password = assign_temporary_password(customer)
-    login_url = request.host_url.rstrip("/") + url_for("login")
-    message = (
-        f"Hello {customer.name},\n"
-        f"Login email: {customer.email}\n"
-        f"Temporary password: {password}\n"
-        "This password is valid for 24 hours only.\n"
-        f"Login: {login_url}"
-    )
-    whatsapp_phone = normalize_customer_phone(customer.phone)
-    whatsapp_url = f"https://wa.me/91{whatsapp_phone}?text={quote(message, safe='')}"
-    customers = User.query.filter_by(is_admin=False).order_by(User.created_at.desc()).all()
-    return render_template(
-        "admin_register_customers.html", customers=customers, form=request.form,
-        generated_password=password, generated_customer=customer,
-        whatsapp_url=whatsapp_url, edit_customer=None,
-        display_phone=display_customer_phone,
-    )
+    try:
+        send_temporary_password_email(customer, password)
+        customer.password_hash = generate_password_hash(password)
+        customer.must_change_password = True
+        customer.temp_password_expires_at = datetime.utcnow() + timedelta(hours=24)
+        db.session.commit()
+        session["temporary_password_last_request"] = now_epoch
+        flash(f"Temporary password sent to {customer.email}.", "success")
+    except (RuntimeError, smtplib.SMTPException, OSError, ValueError, SQLAlchemyError):
+        db.session.rollback()
+        flash("Temporary password email could not be sent. The existing password was not changed.", "error")
+    return redirect(url_for("admin_register_customers"))
 
 
 @app.route("/admin/applications", methods=["GET", "POST"])

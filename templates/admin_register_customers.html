@@ -7,21 +7,16 @@
   <form method="post" class="admin-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>{{ t('full_name') }}</label><input name="name" value="{{ form.get('name','') }}" required minlength="2">
-    <label>{{ t('phone') }}</label><input name="phone" value="{{ form.get('phone','') }}" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required>
+    <label>{{ t('phone') }}</label>
+    <div class="phone-input">
+      <select id="admin-country-code" name="country_code" class="country-select" aria-label="Country code" title="Search by typing a country name">
+        {% for country, code in country_choices %}<option value="{{ code }}" {% if code == form.get('country_code', '+91') %}selected{% endif %}>{{ country }} {{ code }}</option>{% endfor %}
+      </select>
+      <input name="phone" value="{{ form.get('phone','') }}" inputmode="numeric" pattern="[0-9]{7,15}" maxlength="15" required>
+    </div>
     <label>{{ t('email') }}</label><input type="email" name="email" value="{{ form.get('email','') }}" required>
     <br><button class="btn">{{ t('register_customer') }}</button>
   </form>
-  {% if generated_password %}
-  <div class="flash success">
-    Temporary password for {{ generated_customer.name }}:
-    <div class="password-field generated-password-field">
-      <input id="generated-password" type="password" value="{{ generated_password }}" readonly>
-      <button type="button" class="password-toggle" aria-controls="generated-password" title="Show password">&#128065;</button>
-    </div>
-    <button type="button" class="btn small" onclick="navigator.clipboard.writeText(document.getElementById('generated-password').value)">Copy</button>
-    <small>This password is shown once and valid for 24 hours.</small>
-  </div>
-  {% endif %}
 </div>
 <div class="card">
   <h3>{{ t('registered_customers') }}</h3>
@@ -37,11 +32,8 @@
             <form method="post" action="{{ url_for('admin_delete_customer', user_id=customer.id) }}" onsubmit="return confirm('Are you sure you want to delete this user?')">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn small danger">Delete</button>
             </form>
-            <form method="post" action="{{ url_for('admin_generate_customer_password', user_id=customer.id) }}">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn small">Generate Temp Password</button>
-            </form>
-            <form method="post" action="{{ url_for('admin_share_customer_password', user_id=customer.id) }}" target="_blank">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn small">Share & Generate</button>
+            <form method="post" action="{{ url_for('admin_share_customer_password', user_id=customer.id) }}" class="temporary-password-form">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn small">Share &amp; Generate</button>
             </form>
           </div>
         </td>
@@ -56,13 +48,29 @@
   <form method="post" action="{{ url_for('admin_edit_customer', user_id=edit_customer.id) }}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>Full Name</label><input name="name" value="{{ edit_customer.name }}" required minlength="2">
-    <label>Phone Number</label><input name="phone" value="{{ edit_customer.phone }}" inputmode="numeric" maxlength="12" required>
+    <label>Phone Number</label>
+    <div class="phone-input">
+      <select name="country_code" class="country-select" aria-label="Country code">
+        {% for country, code in country_choices %}<option value="{{ code }}" {% if code == (edit_customer.country_code or '+91') %}selected{% endif %}>{{ country }} {{ code }}</option>{% endfor %}
+      </select>
+      {% set edit_phone = edit_customer.phone %}
+      <input name="phone" value="{{ edit_phone[edit_customer.country_code|length:] if edit_customer.country_code and edit_phone.startswith(edit_customer.country_code) else edit_phone }}" inputmode="numeric" pattern="[0-9]{7,15}" maxlength="15" required>
+    </div>
     <label>Email</label><input type="email" name="email" value="{{ edit_customer.email }}" required>
     <br><button class="btn">Save Changes</button>
     <a class="btn small danger" href="{{ url_for('admin_register_customers') }}">Cancel</a>
   </form>
 </div>
 {% endif %}
+<script>
+document.querySelectorAll('.temporary-password-form').forEach(function (form) {
+  form.addEventListener('submit', function () {
+    var button = form.querySelector('button');
+    button.disabled = true;
+    button.textContent = 'Sending...';
+  });
+});
+</script>
 {% if whatsapp_url %}
 <script>window.open({{ whatsapp_url|tojson }}, "_blank");</script>
 {% endif %}

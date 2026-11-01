@@ -61,6 +61,21 @@ npm run dev
 
 Replace these commands according to the actual project configuration.
 
+### Gmail Temporary Password Email
+
+Configure a Gmail account with 2-Step Verification and create an App Password. In the environment, set:
+
+- `MAIL_SERVER=smtp.gmail.com`
+- `MAIL_PORT=587`
+- `MAIL_USE_TLS=true`
+- `MAIL_USERNAME=your-gmail-address@gmail.com`
+- `MAIL_PASSWORD=your-google-app-password`
+- `MAIL_DEFAULT_SENDER=your-gmail-address@gmail.com`
+
+Never commit the app password. For local development, copy `.env.example` to `.env` and fill these values. On Render, add the same variables in **Environment**. Keep `MAIL_USE_TLS=true` and do not use SSL port 465.
+
+An administrator can open **Register Customers** and click **Share & Generate**. The temporary password is emailed to the customer, hashed only after SMTP confirms delivery, and is valid for 24 hours. Customers are required to choose a new password on their first login. PostgreSQL deployments with the existing schema can run `migrations/postgres_temp_password_email.sql`.
+
 ## 7. How the Project Works
 Explain the complete application workflow, major components, and interactions.
 

@@ -68,7 +68,9 @@ document.querySelectorAll('.password-toggle').forEach(function (button) {
   button.addEventListener('click', function () {
     var showing = field.type === 'text';
     field.type = showing ? 'password' : 'text';
-    button.innerHTML = showing ? '&#128065;' : '&#128584;';
+    button.textContent = showing ? '👁' : '*';
+    button.title = showing ? 'Show password' : 'Hide password';
+    button.setAttribute('aria-label', button.title);
   });
 });
 </script>
