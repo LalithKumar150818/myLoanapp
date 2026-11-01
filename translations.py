@@ -2,7 +2,7 @@ LANGS = {"en": "English", "te": "తెలుగు", "hi": "हिन्दी"
 
 TRANSLATIONS = {
     "en": {
-        "app_name": "Loan Mobile App",
+        "app_name": "Mobile Loan App",
         "home": "Home", "login": "Login", "register": "Register", "logout": "Logout",
         "dashboard": "My Applications", "admin_panel": "Admin Panel",
         "hero_title": "Apply for a loan easily",
@@ -33,7 +33,7 @@ TRANSLATIONS = {
         "save": "Save", "applicant": "Applicant", "show_password": "Show password", "hide_password": "Hide password",
     },
     "te": {
-        "app_name": "లోన్ మొబైల్ యాప్",
+        "app_name": "మొబైల్ లోన్ యాప్",
         "home": "హోమ్", "login": "లాగిన్", "register": "రిజిస్టర్", "logout": "లాగౌట్",
         "dashboard": "నా దరఖాస్తులు", "admin_panel": "అడ్మిన్ ప్యానెల్",
         "hero_title": "లోన్ కోసం సులభంగా దరఖాస్తు చేయండి",
@@ -64,7 +64,7 @@ TRANSLATIONS = {
         "save": "సేవ్", "applicant": "దరఖాస్తుదారు", "show_password": "పాస్‌వర్డ్ చూపించండి", "hide_password": "పాస్‌వర్డ్ దాచండి",
     },
     "hi": {
-        "app_name": "लोन मोबाइल ऐप",
+        "app_name": "मोबाइल लोन ऐप",
         "home": "होम", "login": "लॉगिन", "register": "रजिस्टर", "logout": "लॉगआउट",
         "dashboard": "मेरे आवेदन", "admin_panel": "एडमिन पैनल",
         "hero_title": "लोन के लिए आसानी से आवेदन करें",

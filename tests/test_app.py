@@ -62,7 +62,7 @@ def test_application_starts(app_instance):
 def test_home_page_returns_successfully(client):
     response = client.get("/")
     assert response.status_code == 200
-    assert b"Loan Mobile App" in response.data
+    assert b"Mobile Loan App" in response.data
 
 
 def test_registration_and_login(client):

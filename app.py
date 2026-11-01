@@ -140,6 +140,28 @@ def set_setting(key, value):
     db.session.commit()
 
 
+def ensure_database_columns():
+    """Add newly introduced SQLite columns without recreating existing tables."""
+    if db.engine.url.get_backend_name() != "sqlite":
+        return
+    database_path = db.engine.url.database
+    if not database_path or not os.path.isfile(database_path):
+        return
+    with db.engine.connect() as connection:
+        application_columns = {
+            row._mapping["name"]
+            for row in connection.exec_driver_sql("PRAGMA table_info(application)").fetchall()
+        }
+        if "updated_at" not in application_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE application ADD COLUMN updated_at DATETIME"
+            )
+            connection.exec_driver_sql(
+                "UPDATE application SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
+            )
+            connection.commit()
+
+
 def init_db():
     db.create_all()
     set_setting("fee", "36")
@@ -607,6 +629,7 @@ def admin_settings():
 
 
 with app.app_context():
+    ensure_database_columns()
     init_db()
 
 if __name__ == "__main__":
