@@ -39,6 +39,7 @@ td{padding:11px;border-bottom:1px solid var(--pink-light)}
 .table-wrap{overflow-x:auto}
 .badge{padding:3px 11px;border-radius:12px;font-size:.8rem;font-weight:700;color:#fff;white-space:nowrap}
 .badge.Pending{background:var(--warn)}.badge.Under\ Review{background:#3a7bd5}.badge.Approved{background:var(--ok)}.badge.Rejected{background:var(--bad)}
+.badge.Verified{background:var(--ok)}
 .fee-box{background:var(--pink-light);border-radius:14px;padding:18px;text-align:center;margin-top:14px}
 .fee-box .amt{font-size:1.8rem;font-weight:800;color:var(--pink-dark)}
 .fee-box img{max-width:230px;width:100%;border-radius:10px;background:#fff;padding:8px;margin-top:8px}
@@ -91,3 +92,11 @@ select#country-code{margin-bottom:12px}
   color: #b91c1c;
   font-weight: 600;
 }
+.password-field{position:relative;display:flex;align-items:center}
+.password-field input{padding-right:72px}
+.password-toggle{position:absolute;right:7px;min-width:58px;padding:7px 8px;border:0;border-radius:7px;background:#fde7ef;color:var(--pink-dark);font-weight:700;cursor:pointer}
+.password-toggle:focus-visible{outline:3px solid rgba(233,30,99,.25)}
+.admin-workflow-step{text-decoration:none;color:var(--text)}
+.status-actions,.inline-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn.secondary{background:#3a7bd5}.btn.danger{background:var(--bad)}
+@media(max-width:560px){.password-toggle{min-height:38px}.status-actions .btn{flex:1}.inline-actions input{min-width:160px}}

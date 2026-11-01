@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block width %}wide{% endblock %}
+{% block content %}
+<a href="{{ url_for('admin_dashboard') }}">← {{ t('admin_panel') }}</a>
+<div class="card" style="margin-top:12px">
+  <h2>{{ t('review_applications') }}</h2>
+  <div class="table-wrap">
+    <table><tr><th>#</th><th>{{ t('applicant') }}</th><th>{{ t('phone') }}</th><th>{{ t('amount') }}</th><th>{{ t('date') }}</th><th></th></tr>
+      {% for application in applications %}
+      <tr><td>{{ application.id }}</td><td>{{ application.applicant_name }}</td><td>{{ application.user.phone }}</td><td>₹{{ '{:,}'.format(application.loan_amount) }}</td><td>{{ application.created_at.strftime('%d %b %Y') }}</td>
+        <td><form method="post"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="application_id" value="{{ application.id }}"><button class="btn small">{{ t('move_under_review') }}</button></form></td></tr>
+      {% else %}<tr><td colspan="6">{{ t('no_applications_found') }}</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+{% endblock %}

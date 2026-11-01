@@ -253,3 +253,67 @@ def test_regular_user_cannot_upload_qr(app_instance, client):
     }, content_type="multipart/form-data")
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/admin/login")
+
+
+def test_admin_workflow_routes_and_customer_registration(app_instance, client):
+    with app_instance.app_context():
+        admin = application.User(name="Workflow Admin", phone="9666666666", email="workflow.admin@example.com",
+                                 password_hash=application.generate_password_hash("AdminPassword123!"), is_admin=True)
+        application.db.session.add(admin)
+        application.db.session.commit()
+        admin_id = admin.id
+    with client.session_transaction() as test_session:
+        test_session["uid"] = admin_id
+
+    token = csrf_token(client)
+    for route in ("/admin/register-customers", "/admin/applications", "/admin/payments", "/admin/update-status"):
+        response = client.get(route)
+        assert response.status_code == 200
+
+    response = client.post("/admin/register-customers", data={
+        "_csrf": token,
+        "name": "Admin Created Customer",
+        "phone": "9777777777",
+        "email": "created.customer@example.com",
+        "password": "CustomerPassword123!",
+    })
+    assert response.status_code == 302
+    with app_instance.app_context():
+        created = application.User.query.filter_by(email="created.customer@example.com").first()
+        assert created is not None
+        assert application.check_password_hash(created.password_hash, "CustomerPassword123!")
+
+
+def test_payment_verification_and_application_status(app_instance, client):
+    with app_instance.app_context():
+        admin = application.User(name="Status Admin", phone="9888888888", email="status.admin@example.com",
+                                 password_hash=application.generate_password_hash("AdminPassword123!"), is_admin=True)
+        user = application.User(name="Status Customer", phone="9999999999", email="status.customer@example.com",
+                                password_hash=application.generate_password_hash("Password123!"), is_admin=False)
+        application.db.session.add_all([admin, user])
+        application.db.session.flush()
+        loan = application.Application(user_id=user.id, applicant_name="Status Customer", relation_type="S/o",
+                                       relation_name="Father", address="Customer address here", loan_amount=10000,
+                                       repayment_months=12, aadhaar_file="a.jpg", pan_file="p.jpg",
+                                       photo_file="photo.jpg", payment_file="pay.jpg", fee_amount=36)
+        application.db.session.add(loan)
+        application.db.session.flush()
+        payment = application.Payment(user_id=user.id, application_id=loan.id, amount=36)
+        application.db.session.add(payment)
+        application.db.session.commit()
+        admin_id, loan_id, payment_id = admin.id, loan.id, payment.id
+
+    with client.session_transaction() as test_session:
+        test_session["uid"] = admin_id
+    token = csrf_token(client)
+    response = client.post("/admin/application/%d" % loan_id, data={
+        "_csrf": token, "action": "approve", "remarks": "Documents verified"
+    })
+    assert response.status_code == 302
+    response = client.post("/admin/payments", data={
+        "_csrf": token, "payment_id": payment_id, "status": "Verified", "reference": "UPI123"
+    })
+    assert response.status_code == 302
+    with app_instance.app_context():
+        assert application.db.session.get(application.Application, loan_id).status == "Approved"
+        assert application.db.session.get(application.Payment, payment_id).status == "Verified"

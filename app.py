@@ -104,6 +104,21 @@ class Application(db.Model):
     status = db.Column(db.String(20), default="Pending")
     admin_remarks = db.Column(db.Text, default="")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Payment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    application_id = db.Column(db.Integer, db.ForeignKey("application.id"), nullable=True)
+    payment_type = db.Column(db.String(50), default="Processing Fee")
+    amount = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String(20), default="Pending")
+    reference = db.Column(db.String(150), default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    user = db.relationship("User", backref="payments")
+    application = db.relationship("Application", backref="payments")
 
 
 class Setting(db.Model):
@@ -142,6 +157,10 @@ def init_db():
         db.session.add(User(name="Administrator", phone="0000000000", email=admin_email,
                             password_hash=generate_password_hash(admin_password), is_admin=True))
         db.session.commit()
+    for application in Application.query.outerjoin(Payment, Payment.application_id == Application.id).filter(Payment.id.is_(None)).all():
+        db.session.add(Payment(user_id=application.user_id, application_id=application.id,
+                               payment_type="Processing Fee", amount=application.fee_amount or 36))
+    db.session.commit()
 
 # ---------- Helpers ----------
 def normalize_e164(value, default_country="+91"):
@@ -435,7 +454,14 @@ def qr_image():
 @app.route("/admin")
 @admin_required
 def admin_dashboard():
-    status = request.args.get("status")
+    status_param = request.args.get("status", "").strip().lower()
+    status_lookup = {
+        "pending": "Pending",
+        "under-review": "Under Review",
+        "approved": "Approved",
+        "rejected": "Rejected",
+    }
+    status = status_lookup.get(status_param)
     q = Application.query
     if status in STATUSES:
         q = q.filter_by(status=status)
@@ -446,16 +472,107 @@ def admin_dashboard():
                            current=status)
 
 
+@app.route("/admin/register-customers", methods=["GET", "POST"])
+@admin_required
+def admin_register_customers():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        submitted_phone = request.form.get("phone", "").strip()
+        phone = normalize_e164(submitted_phone, "+91")
+        if phone and not normalize_indian_mobile(phone):
+            phone = None
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        phone_candidates = [phone, phone[3:] if phone and phone.startswith("+91") else phone]
+        if len(name) < 2:
+            flash("Customer name must be at least 2 characters.", "error")
+        elif not phone:
+            flash("Enter a valid Indian mobile number.", "error")
+        elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            flash("Enter a valid email address.", "error")
+        elif len(password) < 8:
+            flash("Password must be at least 8 characters.", "error")
+        elif User.query.filter(or_(User.email == email, User.phone.in_(phone_candidates))).first():
+            flash("A customer with this email or phone already exists.", "error")
+        else:
+            db.session.add(User(name=name, phone=phone, email=email,
+                                password_hash=generate_password_hash(password), is_admin=False))
+            db.session.commit()
+            flash("Customer registered successfully.", "success")
+            return redirect(url_for("admin_register_customers"))
+    customers = User.query.filter_by(is_admin=False).order_by(User.created_at.desc()).all()
+    return render_template("admin_register_customers.html", customers=customers, form=request.form)
+
+
+@app.route("/admin/applications", methods=["GET", "POST"])
+@admin_required
+def admin_review_applications():
+    if request.method == "POST":
+        application = db.session.get(Application, request.form.get("application_id", type=int))
+        if application is None:
+            abort(404)
+        application.status = "Under Review"
+        application.updated_at = datetime.utcnow()
+        db.session.commit()
+        flash("Application moved to Under Review.", "success")
+        return redirect(url_for("admin_review_applications"))
+    applications = Application.query.filter_by(status="Pending").order_by(Application.created_at.desc()).all()
+    return render_template("admin_applications.html", applications=applications)
+
+
+@app.route("/admin/payments", methods=["GET", "POST"])
+@admin_required
+def admin_payments():
+    if request.method == "POST":
+        payment = db.session.get(Payment, request.form.get("payment_id", type=int))
+        if payment is None:
+            abort(404)
+        status = request.form.get("status")
+        if status not in ("Verified", "Rejected"):
+            abort(400)
+        payment.status = status
+        payment.reference = request.form.get("reference", "").strip()[:150]
+        payment.updated_at = datetime.utcnow()
+        db.session.commit()
+        flash("Payment verification status updated.", "success")
+        return redirect(url_for("admin_payments"))
+    payments = Payment.query.order_by(Payment.created_at.desc()).all()
+    return render_template("admin_payments.html", payments=payments)
+
+
+@app.route("/admin/update-status", methods=["GET", "POST"])
+@admin_required
+def admin_update_status():
+    if request.method == "POST":
+        application = db.session.get(Application, request.form.get("application_id", type=int))
+        if application is None:
+            abort(404)
+        status = request.form.get("status")
+        if status not in STATUSES:
+            abort(400)
+        application.status = status
+        application.admin_remarks = request.form.get("remarks", "").strip()[:1000]
+        application.updated_at = datetime.utcnow()
+        db.session.commit()
+        flash("Application status updated.", "success")
+        return redirect(url_for("admin_update_status"))
+    applications = Application.query.order_by(Application.created_at.desc()).all()
+    return render_template("admin_update_status.html", applications=applications, statuses=STATUSES)
+
+
 @app.route("/admin/application/<int:app_id>", methods=["GET", "POST"])
 @admin_required
 def admin_application(app_id):
     a = db.session.get(Application, app_id) or abort(404)
     if request.method == "POST":
-        status = request.form.get("status")
+        status = request.form.get("action") or request.form.get("status")
+        status_lookup = {"approve": "Approved", "reject": "Rejected", "under_review": "Under Review"}
+        status = status_lookup.get(status, status)
         if status not in STATUSES:
             abort(400)
         a.status = status
         a.admin_remarks = request.form.get("remarks", "").strip()[:1000]
+        a.updated_at = datetime.utcnow()
         db.session.commit()
         flash("Application updated.", "success")
         return redirect(url_for("admin_application", app_id=a.id))

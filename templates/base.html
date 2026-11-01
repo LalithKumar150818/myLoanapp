@@ -60,6 +60,17 @@
   document.addEventListener('keydown', event => { if (event.key === 'Escape' && menu.classList.contains('open')) closeMenu(); });
   menu.querySelectorAll('a').forEach(link => link.addEventListener('click', closeMenu));
 })();
+
+document.querySelectorAll('.password-toggle').forEach(function (button) {
+  var id = button.dataset.passwordTarget || button.getAttribute('aria-controls');
+  var field = document.getElementById(id);
+  if (!field) return;
+  button.addEventListener('click', function () {
+    var showing = field.type === 'text';
+    field.type = showing ? 'password' : 'text';
+    button.textContent = showing ? 'Show' : 'Hide';
+  });
+});
 </script>
 </body>
 </html>

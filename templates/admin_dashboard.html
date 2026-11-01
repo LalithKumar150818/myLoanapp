@@ -3,21 +3,25 @@
 {% block content %}
 <h2>{{ t('admin_panel') }}</h2>
 <div class="admin-workflow" aria-label="Admin controls">
-  <div class="admin-workflow-step"><b>1</b><span>Register Customers</span></div>
-  <div class="admin-workflow-step"><b>2</b><span>Review Applications</span></div>
-  <div class="admin-workflow-step"><b>3</b><span>Verify Payments</span></div>
-  <div class="admin-workflow-step"><b>4</b><span>Update Status</span></div>
+  <a class="admin-workflow-step" href="{{ url_for('admin_register_customers') }}"><b>1</b><span>{{ t('register_customers') }}</span></a>
+  <a class="admin-workflow-step" href="{{ url_for('admin_review_applications') }}"><b>2</b><span>{{ t('review_applications') }}</span></a>
+  <a class="admin-workflow-step" href="{{ url_for('admin_payments') }}"><b>3</b><span>{{ t('verify_payments') }}</span></a>
+  <a class="admin-workflow-step" href="{{ url_for('admin_update_status') }}"><b>4</b><span>{{ t('update_status') }}</span></a>
 </div>
 <div class="stats">
   <div class="stat"><b>{{ users }}</b>Registered Customers</div>
   <div class="stat"><b>{{ total }}</b>Total Applications</div>
   <div class="stat"><b>{{ counts['Pending'] }}</b>Pending</div>
+  <div class="stat"><b>{{ counts['Under Review'] }}</b>{{ t('under_review') }}</div>
   <div class="stat"><b>{{ counts['Approved'] }}</b>Approved</div>
   <div class="stat"><b>{{ counts['Rejected'] }}</b>Rejected</div>
 </div>
 <div class="filters">
   <a href="{{ url_for('admin_dashboard') }}" class="{{ 'active' if not current }}">All</a>
-  {% for s in counts %}<a href="{{ url_for('admin_dashboard', status=s) }}" class="{{ 'active' if current==s }}">{{ s }}</a>{% endfor %}
+  <a href="{{ url_for('admin_dashboard', status='pending') }}" class="{{ 'active' if current=='Pending' }}">{{ t('pending') }}</a>
+  <a href="{{ url_for('admin_dashboard', status='under-review') }}" class="{{ 'active' if current=='Under Review' }}">{{ t('under_review') }}</a>
+  <a href="{{ url_for('admin_dashboard', status='approved') }}" class="{{ 'active' if current=='Approved' }}">{{ t('approved') }}</a>
+  <a href="{{ url_for('admin_dashboard', status='rejected') }}" class="{{ 'active' if current=='Rejected' }}">{{ t('rejected') }}</a>
 </div>
 <div class="table-wrap"><table>
   <tr><th>#</th><th>Applicant</th><th>Phone</th><th>Amount</th><th>Months</th><th>Date</th><th>Status</th><th></th></tr>

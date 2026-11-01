@@ -33,7 +33,11 @@
     <label>Status</label>
     <select name="status">{% for s in statuses %}<option {{ 'selected' if a.status==s }}>{{ s }}</option>{% endfor %}</select>
     <label>{{ t('remarks') }}</label><textarea name="remarks" rows="3">{{ a.admin_remarks }}</textarea>
-    <br><button class="btn">Save</button>
+    <div class="status-actions">
+      <button class="btn" name="action" value="approve">Approve</button>
+      <button class="btn danger" name="action" value="reject">Reject</button>
+      <button class="btn secondary" name="action" value="under_review">Under Review</button>
+    </div>
   </form>
 </div>
 {% endblock %}

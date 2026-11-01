@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<a href="{{ url_for('admin_dashboard') }}">← {{ t('admin_panel') }}</a>
+<div class="card" style="margin-top:12px">
+  <h2>{{ t('update_status') }}</h2>
+  <form method="post">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>{{ t('application') }}</label>
+    <select name="application_id" required>
+      <option value="">-- {{ t('choose_application') }} --</option>
+      {% for application in applications %}<option value="{{ application.id }}">#{{ application.id }} - {{ application.applicant_name }} ({{ application.status }})</option>{% endfor %}
+    </select>
+    <label>{{ t('status') }}</label><select name="status" required>{% for status in statuses %}<option>{{ status }}</option>{% endfor %}</select>
+    <label>{{ t('remarks') }}</label><textarea name="remarks" rows="3" maxlength="1000"></textarea>
+    <br><button class="btn">{{ t('save') }}</button>
+  </form>
+</div>
+{% endblock %}

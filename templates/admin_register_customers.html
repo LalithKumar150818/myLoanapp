@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block width %}wide{% endblock %}
+{% block content %}
+<a href="{{ url_for('admin_dashboard') }}">← {{ t('admin_panel') }}</a>
+<div class="card" style="margin-top:12px">
+  <h2>{{ t('register_customer') }}</h2>
+  <form method="post" class="admin-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>{{ t('full_name') }}</label><input name="name" value="{{ form.get('name','') }}" required minlength="2">
+    <label>{{ t('phone') }}</label><input name="phone" value="{{ form.get('phone','') }}" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required>
+    <label>{{ t('email') }}</label><input type="email" name="email" value="{{ form.get('email','') }}" required>
+    <label>{{ t('password') }}</label>
+    <div class="password-field">
+      <input id="admin-register-password" type="password" name="password" minlength="8" required>
+      <button type="button" class="password-toggle" aria-controls="admin-register-password" aria-label="{{ t('show_password') }}" title="{{ t('show_password') }}">Show</button>
+    </div>
+    <br><button class="btn">{{ t('register_customer') }}</button>
+  </form>
+</div>
+<div class="card">
+  <h3>{{ t('registered_customers') }}</h3>
+  <div class="table-wrap">
+    <table><tr><th>#</th><th>{{ t('full_name') }}</th><th>{{ t('phone') }}</th><th>{{ t('email') }}</th><th>{{ t('date') }}</th></tr>
+      {% for customer in customers %}
+      <tr><td>{{ customer.id }}</td><td>{{ customer.name }}</td><td>{{ customer.phone }}</td><td>{{ customer.email }}</td><td>{{ customer.created_at.strftime('%d %b %Y') }}</td></tr>
+      {% else %}<tr><td colspan="5">{{ t('no_customers') }}</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+{% endblock %}

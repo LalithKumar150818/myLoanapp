@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block width %}wide{% endblock %}
+{% block content %}
+<a href="{{ url_for('admin_dashboard') }}">← {{ t('admin_panel') }}</a>
+<div class="card" style="margin-top:12px">
+  <h2>{{ t('verify_payments') }}</h2>
+  <div class="table-wrap">
+    <table><tr><th>#</th><th>{{ t('customer') }}</th><th>{{ t('type') }}</th><th>{{ t('amount') }}</th><th>{{ t('status') }}</th><th>{{ t('reference') }}</th><th>{{ t('actions') }}</th></tr>
+      {% for payment in payments %}
+      <tr><td>{{ payment.id }}</td><td>{{ payment.user.name }}</td><td>{{ payment.payment_type }}</td><td>₹{{ '{:,}'.format(payment.amount) }}</td><td><span class="badge {{ payment.status }}">{{ payment.status }}</span></td>
+        <td>{{ payment.reference or '—' }}</td>
+        <td><form method="post" class="inline-actions"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="payment_id" value="{{ payment.id }}"><input name="reference" value="{{ payment.reference }}" placeholder="{{ t('reference_optional') }}"><button class="btn small" name="status" value="Verified">{{ t('verify') }}</button><button class="btn small danger" name="status" value="Rejected">{{ t('reject') }}</button></form></td></tr>
+      {% else %}<tr><td colspan="7">{{ t('no_payments_found') }}</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+{% endblock %}

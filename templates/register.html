@@ -16,7 +16,10 @@
     <label for="email">{{ t('email') }}</label>
     <input id="email" type="email" name="email" class="{{ 'field-error' if field_errors.get('email') }}" value="{{ form.get('email','') }}" required>
     <label for="password">{{ t('password') }}</label>
-    <input id="password" type="password" name="password" class="{{ 'field-error' if field_errors.get('password') }}" minlength="8" required>
+    <div class="password-field">
+      <input id="password" type="password" name="password" class="{{ 'field-error' if field_errors.get('password') }}" minlength="8" required>
+      <button type="button" class="password-toggle" data-password-target="password" aria-label="{{ t('show_password') }}" title="{{ t('show_password') }}">Show</button>
+    </div>
     <label for="confirm_password">{{ t('confirm_password') }}</label>
     <input id="confirm_password" type="password" name="confirm_password" minlength="8" required>
     <br><button class="btn full">{{ t('register') }}</button>
