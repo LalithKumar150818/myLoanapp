@@ -33,7 +33,7 @@
               <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn small danger">Delete</button>
             </form>
             <form method="post" action="{{ url_for('admin_share_customer_password', user_id=customer.id) }}" class="temporary-password-form">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn small">Share &amp; Generate</button>
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn small">Generate Temporary Password</button>
             </form>
           </div>
         </td>

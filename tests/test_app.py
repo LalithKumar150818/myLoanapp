@@ -369,6 +369,40 @@ def test_share_temporary_password_failure_preserves_existing_password(app_instan
         assert preserved.must_change_password is False
 
 
+def test_admin_customer_page_shows_generate_temporary_password(app_instance, client):
+    with app_instance.app_context():
+        admin = application.User(name="Button Admin", phone="9330000000", email="button.admin@example.com",
+                                 password_hash=application.generate_password_hash("AdminPassword123!"), is_admin=True)
+        customer = application.User(name="Button Customer", phone="9330000001",
+                                    email="button.customer@example.com",
+                                    password_hash=application.generate_password_hash("Password123!"))
+        application.db.session.add_all([admin, customer])
+        application.db.session.commit()
+        admin_id = admin.id
+
+    with client.session_transaction() as test_session:
+        test_session["uid"] = admin_id
+    response = client.get("/admin/register-customers")
+    assert response.status_code == 200
+    assert b"Generate Temporary Password" in response.data
+
+
+def test_customer_cannot_generate_temporary_password(app_instance, client):
+    with app_instance.app_context():
+        customer = application.User(name="Customer", phone="9330000002", email="cannot.generate@example.com",
+                                    password_hash=application.generate_password_hash("Password123!"))
+        application.db.session.add(customer)
+        application.db.session.commit()
+        customer_id = customer.id
+
+    with client.session_transaction() as test_session:
+        test_session["uid"] = customer_id
+    token = csrf_token(client)
+    response = client.post("/admin/customers/%d/generate-password" % customer_id, data={"_csrf": token})
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/admin/login")
+
+
 def test_expired_temporary_password_is_rejected(app_instance, client):
     with app_instance.app_context():
         user = application.User(name="Expired Customer", phone="9888888888", email="expired@example.com",
@@ -383,6 +417,49 @@ def test_expired_temporary_password_is_rejected(app_instance, client):
         "_csrf": token, "identifier": "expired@example.com", "password": "Temporary123!"
     })
     assert b"Temporary password has expired" in response.data
+
+
+def test_forgot_password_requires_verified_code(app_instance, client):
+    response = client.get("/reset-password")
+    assert response.status_code == 403
+
+
+def test_forgot_password_reset_changes_password(app_instance, client):
+    with app_instance.app_context():
+        customer = application.User(
+            name="Reset Customer", phone="+919950000004", email="reset@example.com",
+            password_hash=application.generate_password_hash("OldPassword123!")
+        )
+        application.db.session.add(customer)
+        application.db.session.commit()
+
+    token = csrf_token(client)
+    with patch.object(application, "smtp_message") as send_mail:
+        response = client.post("/forgot-password", data={
+            "_csrf": token, "identifier": "reset@example.com"
+        })
+    assert response.status_code == 200
+    assert send_mail.call_count == 1
+    email_body = send_mail.call_args.args[2]
+    otp = email_body.split("Verification code: ", 1)[1].split("\n", 1)[0]
+
+    with client.session_transaction() as test_session:
+        reset_user_id = test_session["password_reset_user_id"]
+        assert test_session["password_reset_attempts"] == 0
+
+    response = client.post("/forgot-password/verify", data={"_csrf": token, "code": otp})
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/reset-password")
+
+    response = client.post("/reset-password", data={
+        "_csrf": token, "password": "NewPassword123!", "confirm_password": "NewPassword123!"
+    })
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/login")
+    with app_instance.app_context():
+        customer = application.db.session.get(application.User, reset_user_id)
+        assert application.check_password_hash(customer.password_hash, "NewPassword123!")
+        assert not application.check_password_hash(customer.password_hash, "OldPassword123!")
 
 
 def test_customer_can_edit_owned_application(app_instance, client):

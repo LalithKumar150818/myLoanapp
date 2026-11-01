@@ -74,7 +74,11 @@ Configure a Gmail account with 2-Step Verification and create an App Password. I
 
 Never commit the app password. For local development, copy `.env.example` to `.env` and fill these values. On Render, add the same variables in **Environment**. Keep `MAIL_USE_TLS=true` and do not use SSL port 465.
 
-An administrator can open **Register Customers** and click **Share & Generate**. The temporary password is emailed to the customer, hashed only after SMTP confirms delivery, and is valid for 24 hours. Customers are required to choose a new password on their first login. PostgreSQL deployments with the existing schema can run `migrations/postgres_temp_password_email.sql`.
+An administrator can open **Register Customers** and click **Generate Temporary Password**. The temporary password is emailed to the customer, hashed only after SMTP confirms delivery, and is valid for 24 hours. Customers are required to choose a new password on their first login. PostgreSQL deployments with the existing schema can run `migrations/postgres_temp_password_email.sql`.
+
+### Forgot Password
+
+Customer login now includes **Forgot Password?**. The customer supplies an email address or mobile number, and the application sends a six-digit verification code to the registered email for 10 minutes. After verification, the customer can create a strong replacement password. No database migration is required because verification state is stored securely in the signed Flask session. Configure the existing `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USE_TLS`, `MAIL_USERNAME`, `MAIL_PASSWORD`, and `MAIL_DEFAULT_SENDER` variables for delivery.
 
 ## 7. How the Project Works
 Explain the complete application workflow, major components, and interactions.
