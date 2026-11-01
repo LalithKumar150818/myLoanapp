@@ -68,7 +68,7 @@ document.querySelectorAll('.password-toggle').forEach(function (button) {
   button.addEventListener('click', function () {
     var showing = field.type === 'text';
     field.type = showing ? 'password' : 'text';
-    button.textContent = showing ? 'Show' : 'Hide';
+    button.innerHTML = showing ? '&#128065;' : '&#128584;';
   });
 });
 </script>

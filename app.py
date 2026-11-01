@@ -2,8 +2,9 @@ import os
 import re
 import secrets
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 from flask import (Flask, abort, flash, g, redirect, render_template, request,
@@ -65,7 +66,7 @@ app.config.update(
 )
 db = SQLAlchemy(app)
 
-MIN_LOAN, MAX_LOAN = 1000, 1000000
+MIN_LOAN, MAX_LOAN = 100, 10000000
 MIN_MONTHS, MAX_MONTHS = 1, 60
 STATUSES = ["Pending", "Under Review", "Approved", "Rejected"]
 DEFAULT_CONDITIONS = (
@@ -83,6 +84,8 @@ class User(db.Model):
     email = db.Column(db.String(150), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
+    must_change_password = db.Column(db.Boolean, default=False, nullable=False)
+    temp_password_expires_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     applications = db.relationship("Application", backref="user", lazy=True)
 
@@ -141,24 +144,32 @@ def set_setting(key, value):
 
 
 def ensure_database_columns():
-    """Add newly introduced SQLite columns without recreating existing tables."""
-    if db.engine.url.get_backend_name() != "sqlite":
-        return
-    database_path = db.engine.url.database
-    if not database_path or not os.path.isfile(database_path):
-        return
+    """Add newly introduced columns without recreating existing tables."""
     with db.engine.connect() as connection:
-        application_columns = {
-            row._mapping["name"]
-            for row in connection.exec_driver_sql("PRAGMA table_info(application)").fetchall()
-        }
-        if "updated_at" not in application_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE application ADD COLUMN updated_at DATETIME"
-            )
-            connection.exec_driver_sql(
-                "UPDATE application SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
-            )
+        if db.engine.url.get_backend_name() == "sqlite":
+            application_columns = {
+                row._mapping["name"]
+                for row in connection.exec_driver_sql("PRAGMA table_info(application)").fetchall()
+            }
+            if application_columns and "updated_at" not in application_columns:
+                connection.exec_driver_sql("ALTER TABLE application ADD COLUMN updated_at DATETIME")
+                connection.exec_driver_sql("UPDATE application SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)")
+            user_columns = {
+                row._mapping["name"]
+                for row in connection.exec_driver_sql("PRAGMA table_info(user)").fetchall()
+            }
+            if user_columns and "must_change_password" not in user_columns:
+                connection.exec_driver_sql("ALTER TABLE user ADD COLUMN must_change_password BOOLEAN DEFAULT 0 NOT NULL")
+            if user_columns and "temp_password_expires_at" not in user_columns:
+                connection.exec_driver_sql("ALTER TABLE user ADD COLUMN temp_password_expires_at DATETIME")
+            connection.commit()
+        else:
+            from sqlalchemy import inspect
+            existing_user_columns = {column["name"] for column in inspect(db.engine).get_columns("user")}
+            if "must_change_password" not in existing_user_columns:
+                connection.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE NOT NULL")
+            if "temp_password_expires_at" not in existing_user_columns:
+                connection.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN temp_password_expires_at TIMESTAMP")
             connection.commit()
 
 
@@ -215,6 +226,10 @@ def before():
         token = session.get("_csrf")
         if not token or token != request.form.get("_csrf"):
             abort(400, "Invalid or missing CSRF token. Go back and refresh the page.")
+    if g.user and not g.user.is_admin and g.user.must_change_password:
+        allowed = {"change_password", "logout", "static"}
+        if request.endpoint not in allowed:
+            return redirect(url_for("change_password"))
 
 
 @app.after_request
@@ -233,7 +248,8 @@ def inject():
     def t(key):
         return TRANSLATIONS.get(lang, {}).get(key) or TRANSLATIONS["en"].get(key, key)
 
-    return dict(t=t, csrf_token=session["_csrf"], user=g.user, lang=lang, LANGS=LANGS)
+    return dict(t=t, csrf_token=session["_csrf"], user=g.user, lang=lang, LANGS=LANGS,
+                now=datetime.utcnow())
 
 
 def login_required(f):
@@ -253,6 +269,29 @@ def admin_required(f):
             return redirect(url_for("admin_login"))
         return f(*a, **kw)
     return wrapper
+
+
+def generate_temporary_password():
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*"
+    while True:
+        password = "".join(secrets.choice(alphabet) for _ in range(10))
+        if (any(char.islower() for char in password)
+                and any(char.isupper() for char in password)
+                and any(char.isdigit() for char in password)
+                and any(char in "!@#$%^&*" for char in password)):
+            return password
+
+
+def normalize_customer_phone(value):
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    return digits if re.fullmatch(r"[6-9]\d{9}", digits) else None
+
+
+def display_customer_phone(phone):
+    normalized = normalize_customer_phone(phone)
+    return "+91 " + normalized if normalized else phone
 
 
 SIGNATURES = {"jpg": b"\xff\xd8", "jpeg": b"\xff\xd8", "png": b"\x89PNG", "pdf": b"%PDF"}
@@ -335,6 +374,9 @@ def do_login(admin):
             phone_candidates.append("+91" + ident)
         u = User.query.filter(or_(User.email == ident, User.phone.in_(phone_candidates))).first()
         if u and check_password_hash(u.password_hash, pw) and bool(u.is_admin) == admin:
+            if not admin and u.must_change_password and u.temp_password_expires_at and u.temp_password_expires_at < datetime.utcnow():
+                flash("Temporary password has expired. Please contact admin.", "error")
+                return render_template("login.html", admin=False)
             session.clear()
             session["uid"] = u.id
             return redirect(url_for("admin_dashboard" if admin else "dashboard"))
@@ -350,6 +392,30 @@ def login():
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     return do_login(True)
+
+
+@app.route("/change-password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    if g.user.is_admin or not g.user.must_change_password:
+        return redirect(url_for("dashboard"))
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+        if len(password) < 8:
+            flash("Password must be at least 8 characters.", "error")
+        elif password != confirm_password:
+            flash("Passwords do not match.", "error")
+        elif check_password_hash(g.user.password_hash, password):
+            flash("New password must differ from the temporary password.", "error")
+        else:
+            g.user.password_hash = generate_password_hash(password)
+            g.user.must_change_password = False
+            g.user.temp_password_expires_at = None
+            db.session.commit()
+            flash("Password changed successfully.", "success")
+            return redirect(url_for("dashboard"))
+    return render_template("change_password.html")
 
 
 @app.route("/logout")
@@ -497,33 +563,137 @@ def admin_dashboard():
 @app.route("/admin/register-customers", methods=["GET", "POST"])
 @admin_required
 def admin_register_customers():
+    generated_password = None
+    generated_customer = None
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         submitted_phone = request.form.get("phone", "").strip()
-        phone = normalize_e164(submitted_phone, "+91")
-        if phone and not normalize_indian_mobile(phone):
-            phone = None
+        phone = normalize_customer_phone(submitted_phone)
         email = request.form.get("email", "").strip().lower()
-        password = request.form.get("password", "")
-        phone_candidates = [phone, phone[3:] if phone and phone.startswith("+91") else phone]
         if len(name) < 2:
             flash("Customer name must be at least 2 characters.", "error")
         elif not phone:
             flash("Enter a valid Indian mobile number.", "error")
         elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
             flash("Enter a valid email address.", "error")
-        elif len(password) < 8:
-            flash("Password must be at least 8 characters.", "error")
-        elif User.query.filter(or_(User.email == email, User.phone.in_(phone_candidates))).first():
+        elif User.query.filter(or_(User.email == email, User.phone.in_([phone, "+91" + phone, "91" + phone]))).first():
             flash("A customer with this email or phone already exists.", "error")
         else:
-            db.session.add(User(name=name, phone=phone, email=email,
-                                password_hash=generate_password_hash(password), is_admin=False))
+            generated_password = generate_temporary_password()
+            generated_customer = User(
+                name=name, phone=phone, email=email,
+                password_hash=generate_password_hash(generated_password),
+                is_admin=False, must_change_password=True,
+                temp_password_expires_at=datetime.utcnow() + timedelta(hours=24),
+            )
+            db.session.add(generated_customer)
             db.session.commit()
             flash("Customer registered successfully.", "success")
-            return redirect(url_for("admin_register_customers"))
     customers = User.query.filter_by(is_admin=False).order_by(User.created_at.desc()).all()
-    return render_template("admin_register_customers.html", customers=customers, form=request.form)
+    edit_id = request.args.get("edit", type=int)
+    edit_customer = db.session.get(User, edit_id) if edit_id else None
+    if edit_customer and edit_customer.is_admin:
+        edit_customer = None
+    return render_template(
+        "admin_register_customers.html", customers=customers, form=request.form,
+        generated_password=generated_password, generated_customer=generated_customer,
+        edit_customer=edit_customer, display_phone=display_customer_phone,
+    )
+
+
+@app.route("/admin/customers/<int:user_id>/edit", methods=["POST"])
+@login_required
+@admin_required
+def admin_edit_customer(user_id):
+    customer = db.session.get(User, user_id)
+    if customer is None or customer.is_admin:
+        abort(404)
+    name = request.form.get("name", "").strip()
+    phone = normalize_customer_phone(request.form.get("phone", ""))
+    email = request.form.get("email", "").strip().lower()
+    if len(name) < 2:
+        flash("Customer name must be at least 2 characters.", "error")
+    elif phone is None:
+        flash("Enter a valid Indian mobile number.", "error")
+    elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        flash("Enter a valid email address.", "error")
+    elif User.query.filter(User.id != customer.id, or_(User.email == email, User.phone.in_([phone, "+91" + phone, "91" + phone]))).first():
+        flash("Another customer uses this email or phone.", "error")
+    else:
+        customer.name = name
+        customer.phone = phone
+        customer.email = email
+        db.session.commit()
+        flash("Customer details updated.", "success")
+    return redirect(url_for("admin_register_customers"))
+
+
+@app.route("/admin/customers/<int:user_id>/delete", methods=["POST"])
+@login_required
+@admin_required
+def admin_delete_customer(user_id):
+    customer = db.session.get(User, user_id)
+    if customer is None or customer.is_admin:
+        abort(404)
+    if customer.applications:
+        flash("This customer has loan applications and cannot be deleted.", "error")
+    else:
+        db.session.delete(customer)
+        db.session.commit()
+        flash("Customer deleted successfully.", "success")
+    return redirect(url_for("admin_register_customers"))
+
+
+def assign_temporary_password(customer):
+    password = generate_temporary_password()
+    customer.password_hash = generate_password_hash(password)
+    customer.must_change_password = True
+    customer.temp_password_expires_at = datetime.utcnow() + timedelta(hours=24)
+    db.session.commit()
+    return password
+
+
+@app.route("/admin/customers/<int:user_id>/generate-password", methods=["POST"])
+@login_required
+@admin_required
+def admin_generate_customer_password(user_id):
+    customer = db.session.get(User, user_id)
+    if customer is None or customer.is_admin:
+        abort(404)
+    password = assign_temporary_password(customer)
+    customers = User.query.filter_by(is_admin=False).order_by(User.created_at.desc()).all()
+    return render_template(
+        "admin_register_customers.html", customers=customers, form=request.form,
+        generated_password=password, generated_customer=customer,
+        edit_customer=None, display_phone=display_customer_phone,
+    )
+
+
+@app.route("/admin/customers/<int:user_id>/share", methods=["POST"])
+@login_required
+@admin_required
+def admin_share_customer_password(user_id):
+    customer = db.session.get(User, user_id)
+    if customer is None or customer.is_admin:
+        abort(404)
+    password = assign_temporary_password(customer)
+    login_url = request.host_url.rstrip("/") + url_for("login")
+    message = (
+        f"Hello {customer.name},\n"
+        f"Login email: {customer.email}\n"
+        f"Temporary password: {password}\n"
+        "This password is valid for 24 hours only.\n"
+        f"Login: {login_url}"
+    )
+    whatsapp_phone = normalize_customer_phone(customer.phone)
+    whatsapp_url = f"https://wa.me/91{whatsapp_phone}?text={quote(message, safe='')}"
+    customers = User.query.filter_by(is_admin=False).order_by(User.created_at.desc()).all()
+    return render_template(
+        "admin_register_customers.html", customers=customers, form=request.form,
+        generated_password=password, generated_customer=customer,
+        whatsapp_url=whatsapp_url, edit_customer=None,
+        display_phone=display_customer_phone,
+    )
 
 
 @app.route("/admin/applications", methods=["GET", "POST"])

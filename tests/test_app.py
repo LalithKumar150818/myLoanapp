@@ -277,11 +277,12 @@ def test_admin_workflow_routes_and_customer_registration(app_instance, client):
         "email": "created.customer@example.com",
         "password": "CustomerPassword123!",
     })
-    assert response.status_code == 302
+    assert response.status_code == 200
     with app_instance.app_context():
         created = application.User.query.filter_by(email="created.customer@example.com").first()
         assert created is not None
-        assert application.check_password_hash(created.password_hash, "CustomerPassword123!")
+        assert created.must_change_password is True
+        assert created.temp_password_expires_at is not None
 
 
 def test_payment_verification_and_application_status(app_instance, client):

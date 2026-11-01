@@ -99,4 +99,8 @@ select#country-code{margin-bottom:12px}
 .admin-workflow-step{text-decoration:none;color:var(--text)}
 .status-actions,.inline-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .btn.secondary{background:#3a7bd5}.btn.danger{background:var(--bad)}
+.customer-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.customer-actions form{margin:0}
+.customer-actions .btn{margin:0;white-space:nowrap}
+.generated-password-field{max-width:320px;margin:8px 0}
 @media(max-width:560px){.password-toggle{min-height:38px}.status-actions .btn{flex:1}.inline-actions input{min-width:160px}}
