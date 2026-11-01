@@ -12,6 +12,7 @@ os.environ["DATABASE_URL"] = "sqlite:///" + TEST_DATABASE_FILE.replace("\\", "/"
 os.environ["SECRET_KEY"] = "test-only-secret-key"
 os.environ["UPLOAD_DIR"] = TEST_STARTUP_UPLOAD_DIR
 os.environ["SESSION_COOKIE_SECURE"] = "false"
+os.environ["OTP_DEV_MODE"] = "true"
 
 import app as application
 
@@ -33,7 +34,8 @@ def csrf_token(client):
 def verify_registration_otp(client, token, phone):
     response = client.post("/register/send-mobile-otp", data={"_csrf": token, "phone": phone})
     assert response.status_code == 200
-    otp = response.get_json()["development_otp"]
+    otp = application.LAST_DEVELOPMENT_SMS_OTP
+    assert otp is not None
     response = client.post("/register/verify-mobile-otp", data={"_csrf": token, "phone": phone, "otp": otp})
     assert response.status_code == 200
 

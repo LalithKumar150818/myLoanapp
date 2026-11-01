@@ -24,6 +24,16 @@ Explain the purpose of important folders and files.
 
 ## 6. Installation and Setup
 
+### Mobile OTP SMS delivery
+
+Configure one SMS provider before starting the application.
+
+For Twilio, set `SMS_PROVIDER=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`.
+
+Alternatively, use `SMS_PROVIDER=webhook` with `SMS_GATEWAY_URL`. The application sends a JSON request containing `phone`, `mobile`, and `message`.
+
+OTP delivery is disabled when neither provider is configured. Local development can use `OTP_DEV_MODE=true`; OTPs are logged only on the server and are never returned by the API.
+
 ### Prerequisites
 - Git
 - Node.js (if applicable)

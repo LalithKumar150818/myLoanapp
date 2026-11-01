@@ -9,7 +9,7 @@
     <label for="phone">{{ t('phone') }}</label>
     <div class="otp-row">
       <input id="phone" name="phone" class="{{ 'field-error' if field_errors.get('phone') or field_errors.get('otp') }}" inputmode="numeric" maxlength="10" value="{{ form.get('phone','') }}" required>
-      <button class="btn small" id="send-otp" type="button">Send OTP</button>
+      <button class="btn small" id="send-otp" type="button">Get OTP</button>
     </div>
     <label for="otp">Mobile OTP</label>
     <div class="otp-row">
@@ -17,6 +17,8 @@
       <button class="btn small secondary" id="verify-otp" type="button">Verify OTP</button>
     </div>
     <div id="otp-status" class="otp-status" role="status"></div>
+    <div id="phone-error" class="field-message" aria-live="polite"></div>
+    <div id="resend-status" class="resend-status" aria-live="polite"></div>
     <label for="email">{{ t('email') }}</label>
     <input id="email" type="email" name="email" class="{{ 'field-error' if field_errors.get('email') }}" value="{{ form.get('email','') }}" required>
     <label for="password">{{ t('password') }}</label><input id="password" type="password" name="password" class="{{ 'field-error' if field_errors.get('password') }}" minlength="8" required>
@@ -29,16 +31,39 @@
     const phone = document.getElementById('phone');
     const otp = document.getElementById('otp');
     const status = document.getElementById('otp-status');
+    const phoneError = document.getElementById('phone-error');
+    const resendStatus = document.getElementById('resend-status');
+    const sendButton = document.getElementById('send-otp');
+    let resendTimer = null;
+    function startCountdown(seconds) {
+      clearInterval(resendTimer);
+      let remaining = seconds;
+      sendButton.disabled = remaining > 0;
+      resendStatus.textContent = remaining > 0 ? `Resend available in ${remaining}s` : '';
+      resendTimer = setInterval(function () {
+        remaining -= 1;
+        resendStatus.textContent = remaining > 0 ? `Resend available in ${remaining}s` : 'You can resend the OTP now.';
+        if (remaining <= 0) {
+          clearInterval(resendTimer);
+          sendButton.disabled = false;
+        }
+      }, 1000);
+    }
     function body(extra) { const data = new URLSearchParams(extra); data.set('_csrf', csrf); return data; }
     async function request(url, extra, button) {
       button.disabled = true;
       try {
         const response = await fetch(url, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body(extra)});
         const result = await response.json();
-        status.textContent = result.message + (result.development_otp ? ' Development OTP: ' + result.development_otp : '');
+        status.textContent = result.message;
         status.className = 'otp-status ' + (result.ok ? 'success' : 'error');
+        phoneError.textContent = result.field === 'phone' ? result.message : '';
+        if (result.field === 'phone') phone.classList.add('field-error');
+        else phone.classList.remove('field-error');
+        if (result.resend_after) startCountdown(result.resend_after);
+        if (result.retry_after) startCountdown(result.retry_after);
       } catch (_) { status.textContent = 'Unable to complete OTP request.'; status.className = 'otp-status error'; }
-      button.disabled = false;
+      if (button !== sendButton || resendStatus.textContent === '') button.disabled = false;
     }
     document.getElementById('send-otp').addEventListener('click', function () { request('{{ url_for("send_mobile_otp") }}', {phone:phone.value}, this); });
     document.getElementById('verify-otp').addEventListener('click', function () { request('{{ url_for("verify_mobile_otp") }}', {phone:phone.value, otp:otp.value}, this); });

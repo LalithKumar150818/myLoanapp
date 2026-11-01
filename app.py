@@ -2,10 +2,15 @@ import os
 import re
 import secrets
 import uuid
+import hashlib
+import hmac
+import time
 from datetime import datetime
 from functools import wraps
 import json
 import urllib.request
+import urllib.parse
+import urllib.error
 
 from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, request,
                    send_from_directory, session, url_for)
@@ -145,6 +150,81 @@ def init_db():
         db.session.commit()
 
 # ---------- Helpers ----------
+OTP_LENGTH = 6
+OTP_EXPIRY_SECONDS = 300
+OTP_RESEND_SECONDS = 60
+OTP_MAX_ATTEMPTS = 5
+LAST_DEVELOPMENT_SMS_OTP = None
+
+
+def normalize_indian_mobile(value):
+    phone = re.sub(r"[\s\-()]", "", (value or "").strip())
+    if phone.startswith("+91"):
+        phone = phone[3:]
+    elif phone.startswith("91") and len(phone) == 12:
+        phone = phone[2:]
+    return phone if re.fullmatch(r"[6-9]\d{9}", phone) else None
+
+
+def otp_digest(phone, code):
+    value = f"{phone}:{code}".encode("utf-8")
+    key = app.config["SECRET_KEY"].encode("utf-8")
+    return hmac.new(key, value, hashlib.sha256).hexdigest()
+
+
+def send_sms(phone, message):
+    global LAST_DEVELOPMENT_SMS_OTP
+    provider = os.environ.get("SMS_PROVIDER", "").strip().lower()
+    if not provider and os.environ.get("SMS_GATEWAY_URL"):
+        provider = "webhook"
+    if not provider and all(os.environ.get(name) for name in (
+        "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"
+    )):
+        provider = "twilio"
+    gateway_phone = "+91" + phone
+
+    if provider == "twilio":
+        account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+        auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+        sender = os.environ.get("TWILIO_FROM_NUMBER")
+        if not all((account_sid, auth_token, sender)):
+            raise RuntimeError("Twilio SMS configuration is incomplete")
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{urllib.parse.quote(account_sid)}/Messages.json"
+        payload = urllib.parse.urlencode({"To": gateway_phone, "From": sender, "Body": message}).encode("utf-8")
+        credentials = f"{account_sid}:{auth_token}".encode("utf-8")
+        import base64
+        authorization = base64.b64encode(credentials).decode("ascii")
+        req = urllib.request.Request(url, data=payload, headers={
+            "Authorization": "Basic " + authorization,
+            "Content-Type": "application/x-www-form-urlencoded",
+        }, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        if result.get("error_code") or result.get("status") in ("failed", "undelivered"):
+            raise RuntimeError("Twilio rejected the SMS request")
+        return
+
+    sms_gateway = os.environ.get("SMS_GATEWAY_URL")
+    if provider == "webhook" and sms_gateway:
+        payload = json.dumps({
+            "phone": gateway_phone,
+            "mobile": gateway_phone,
+            "message": message,
+        }).encode("utf-8")
+        req = urllib.request.Request(sms_gateway, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as response:
+            response.read()
+        return
+
+    if os.environ.get("OTP_DEV_MODE", "").lower() == "true":
+        otp_match = re.search(r"\b\d{6}\b", message)
+        LAST_DEVELOPMENT_SMS_OTP = otp_match.group(0) if otp_match else None
+        print(f"Development OTP SMS to {gateway_phone}: {message}")
+        return
+
+    raise RuntimeError("SMS provider is not configured")
+
+
 @app.before_request
 def before():
     uid = session.get("uid")
@@ -226,34 +306,52 @@ def set_lang(code):
 
 @app.route("/register/send-mobile-otp", methods=["POST"])
 def send_mobile_otp():
-    phone = request.form.get("phone", "").strip()
-    if not re.fullmatch(r"[6-9]\d{9}", phone):
-        return jsonify(ok=False, message="Enter a valid 10-digit Indian mobile number."), 400
+    phone = normalize_indian_mobile(request.form.get("phone", ""))
+    if not phone:
+        return jsonify(ok=False, field="phone", message="Invalid mobile number. Please enter a valid number."), 400
+
+    now = time.time()
+    pending = session.get("mobile_otp") or {}
+    if pending.get("phone") == phone and now < pending.get("resend_at", 0):
+        retry_after = max(1, int(pending["resend_at"] - now))
+        return jsonify(ok=False, message=f"Please wait {retry_after} seconds before requesting another OTP.", retry_after=retry_after), 429
+
     otp = f"{secrets.randbelow(900000) + 100000:06d}"
-    session["mobile_otp"] = {"phone": phone, "code": otp, "verified": False}
-    sms_gateway = os.environ.get("SMS_GATEWAY_URL")
-    if sms_gateway:
-        try:
-            payload = json.dumps({"phone": phone, "message": f"Your registration OTP is {otp}"}).encode("utf-8")
-            req = urllib.request.Request(sms_gateway, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-            urllib.request.urlopen(req, timeout=10).read()
-        except Exception:
-            return jsonify(ok=False, message="OTP service is temporarily unavailable."), 503
-    elif IS_PRODUCTION:
-        print(f"Registration OTP for {phone}: {otp} (configure SMS_GATEWAY_URL to deliver SMS)")
-    response = {"ok": True, "message": "OTP sent to your mobile number."}
-    if not IS_PRODUCTION and not sms_gateway:
-        response["development_otp"] = otp
-    return jsonify(response)
+    try:
+        send_sms(phone, f"Your Loan Mobile App verification OTP is {otp}. It expires in 5 minutes. Do not share it with anyone.")
+    except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError, TimeoutError, json.JSONDecodeError) as error:
+        app.logger.error("SMS delivery failed for mobile verification: %s", error)
+        return jsonify(ok=False, message="We could not send the OTP. Please try again shortly."), 503
+
+    session["mobile_otp"] = {
+        "phone": phone,
+        "hash": otp_digest(phone, otp),
+        "verified": False,
+        "expires_at": now + OTP_EXPIRY_SECONDS,
+        "resend_at": now + OTP_RESEND_SECONDS,
+        "attempts": 0,
+    }
+    return jsonify(ok=True, message="OTP sent successfully. Please check your mobile.", resend_after=OTP_RESEND_SECONDS, expires_in=OTP_EXPIRY_SECONDS)
 
 
 @app.route("/register/verify-mobile-otp", methods=["POST"])
 def verify_mobile_otp():
-    phone = request.form.get("phone", "").strip()
+    phone = normalize_indian_mobile(request.form.get("phone", ""))
     code = request.form.get("otp", "").strip()
     pending = session.get("mobile_otp") or {}
-    if pending.get("phone") != phone or pending.get("code") != code:
+    if not phone or pending.get("phone") != phone:
         return jsonify(ok=False, message="The OTP is incorrect or does not match this mobile number."), 400
+    if not re.fullmatch(r"\d{6}", code):
+        return jsonify(ok=False, message="Enter the complete 6-digit OTP."), 400
+    if time.time() >= pending.get("expires_at", 0):
+        return jsonify(ok=False, message="The OTP has expired. Please request a new OTP.", expired=True), 400
+    if pending.get("attempts", 0) >= OTP_MAX_ATTEMPTS:
+        return jsonify(ok=False, message="Too many incorrect attempts. Please request a new OTP.", expired=True), 429
+    if not hmac.compare_digest(pending.get("hash", ""), otp_digest(phone, code)):
+        pending["attempts"] = pending.get("attempts", 0) + 1
+        session["mobile_otp"] = pending
+        remaining = OTP_MAX_ATTEMPTS - pending["attempts"]
+        return jsonify(ok=False, message=f"The OTP is incorrect. {remaining} attempts remaining." if remaining else "Too many incorrect attempts. Please request a new OTP."), 400
     pending["verified"] = True
     session["mobile_otp"] = pending
     return jsonify(ok=True, message="Mobile number verified successfully.")
