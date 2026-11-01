@@ -321,7 +321,7 @@ def test_payment_verification_and_application_status(app_instance, client):
         assert application.db.session.get(application.Payment, payment_id).status == "Verified"
 
 
-def test_share_temporary_password_only_changes_password_after_email(app_instance, client):
+def test_generate_temporary_password_and_display_copy_value(app_instance, client):
     with app_instance.app_context():
         admin = application.User(name="Mail Admin", phone="9444444444", email="mail.admin@example.com",
                                  password_hash=application.generate_password_hash("AdminPassword123!"), is_admin=True)
@@ -334,39 +334,14 @@ def test_share_temporary_password_only_changes_password_after_email(app_instance
     with client.session_transaction() as test_session:
         test_session["uid"] = admin_id
     token = csrf_token(client)
-    with patch.object(application, "send_temporary_password_email", return_value=None) as send_email:
-        response = client.post("/admin/customers/%d/share" % customer_id, data={"_csrf": token})
+    response = client.post("/admin/customers/%d/generate-password" % customer_id, data={"_csrf": token})
     assert response.status_code == 302
-    assert send_email.call_count == 1
-    sent_customer, sent_password = send_email.call_args.args
-    assert sent_password not in response.data.decode("utf-8")
     with app_instance.app_context():
-        assert application.check_password_hash(
-            application.db.session.get(application.User, customer_id).password_hash, sent_password
-        )
-
-
-def test_share_temporary_password_failure_preserves_existing_password(app_instance, client):
-    with app_instance.app_context():
-        admin = application.User(name="Mail Admin", phone="9666666666", email="mail.failure.admin@example.com",
-                                 password_hash=application.generate_password_hash("AdminPassword123!"), is_admin=True)
-        customer = application.User(name="Mail Customer", phone="9777777777", email="mail.failure.customer@example.com",
-                                    password_hash=application.generate_password_hash("ExistingPassword123!"))
-        application.db.session.add_all([admin, customer])
-        application.db.session.commit()
-        admin_id, customer_id, original_hash = admin.id, customer.id, customer.password_hash
-
-    with client.session_transaction() as test_session:
-        test_session["uid"] = admin_id
-    token = csrf_token(client)
-    with patch.object(application, "send_temporary_password_email",
-                      side_effect=application.smtplib.SMTPAuthenticationError(535, b"authentication failed")):
-        response = client.post("/admin/customers/%d/share" % customer_id, data={"_csrf": token})
-    assert response.status_code == 302
-    with application.app.app_context():
-        preserved = application.db.session.get(application.User, customer_id)
-        assert preserved.password_hash == original_hash
-        assert preserved.must_change_password is False
+        customer = application.db.session.get(application.User, customer_id)
+        assert customer.must_change_password is True
+        assert customer.temp_password_expires_at is not None
+    response = client.get("/admin/register-customers")
+    assert b"Copy Password" in response.data
 
 
 def test_admin_customer_page_shows_generate_temporary_password(app_instance, client):

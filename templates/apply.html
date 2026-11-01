@@ -36,7 +36,9 @@
       <div class="amt">₹36</div>
       {% if qr_ready %}
         <p>{{ t('scan_qr') }}</p>
-        <img src="{{ url_for('qr_image') }}" alt="QR">
+        <div class="payment-qr-frame">
+          <img class="payment-qr-image" src="{{ url_for('qr_image') }}" alt="₹36 UPI payment QR code" width="230" height="230" loading="eager" decoding="sync">
+        </div>
         {% if upi_id %}
         <div class="payment-actions">
           <a class="payment-link upi-payment-button" href="upi://pay?pa={{ upi_id | urlencode }}&amp;pn=Loan%20Application&amp;am=36&amp;cu=INR">
@@ -49,6 +51,20 @@
         <p class="payment-unavailable">Payment is not available yet. The administrator must upload a QR code.</p>
       {% endif %}
     </div>
+
+<script>
+(function () {
+  var qrImage = document.querySelector('.payment-qr-image');
+  if (!qrImage) return;
+  var retried = false;
+  qrImage.addEventListener('error', function () {
+    if (retried) return;
+    retried = true;
+    var separator = qrImage.src.indexOf('?') === -1 ? '?' : '&';
+    qrImage.src = qrImage.src.split('?')[0] + separator + 'retry=' + Date.now();
+  });
+})();
+</script>
 
     {% if registration_fee_required %}
     <label>{{ t('after_payment') }} — {{ t('upload_screenshot') }}</label>

@@ -4,8 +4,6 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta
-import smtplib
-from email.message import EmailMessage
 from functools import wraps
 from urllib.parse import quote
 
@@ -489,31 +487,6 @@ def login():
     return do_login(False)
 
 
-def smtp_message(customer, subject, body):
-    smtp_host = os.environ.get("MAIL_SERVER", os.environ.get("SMTP_HOST", "")).strip()
-    smtp_port = int(os.environ.get("MAIL_PORT", os.environ.get("SMTP_PORT", "587")))
-    smtp_user = os.environ.get("MAIL_USERNAME", os.environ.get("SMTP_USERNAME", "")).strip()
-    smtp_password = os.environ.get("MAIL_PASSWORD", os.environ.get("SMTP_PASSWORD", ""))
-    sender = os.environ.get("MAIL_DEFAULT_SENDER", os.environ.get("SMTP_FROM", smtp_user)).strip()
-    use_tls = os.environ.get("MAIL_USE_TLS", os.environ.get("SMTP_USE_TLS", "true")).lower() == "true"
-    if not smtp_host or not smtp_user or not smtp_password or not sender:
-        raise RuntimeError("Email service is not configured.")
-
-    message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = sender
-    message["To"] = customer.email
-    message.set_content(body)
-    server = smtplib.SMTP(smtp_host, smtp_port, timeout=20)
-    try:
-        if use_tls:
-            server.starttls()
-        server.login(smtp_user, smtp_password)
-        server.send_message(message)
-    finally:
-        server.quit()
-
-
 def phone_digits_match(left, right):
     left_digits = re.sub(r"\D", "", left or "")
     right_digits = re.sub(r"\D", "", right or "")
@@ -928,7 +901,11 @@ def qr_image():
     name = get_setting("qr_file")
     if not name:
         abort(404)
-    return send_from_directory(UPLOAD_DIR, name)
+    response = send_from_directory(UPLOAD_DIR, name, conditional=True, max_age=0)
+    response.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 # ---------- Admin routes ----------
 @app.route("/admin")
@@ -1052,50 +1029,6 @@ def assign_temporary_password(customer):
     return generate_temporary_password()
 
 
-def send_temporary_password_email(customer, password):
-    smtp_host = os.environ.get("MAIL_SERVER", os.environ.get("SMTP_HOST", "")).strip()
-    smtp_port = int(os.environ.get("MAIL_PORT", os.environ.get("SMTP_PORT", "587")))
-    smtp_user = os.environ.get("MAIL_USERNAME", os.environ.get("SMTP_USERNAME", "")).strip()
-    smtp_password = os.environ.get("MAIL_PASSWORD", os.environ.get("SMTP_PASSWORD", ""))
-    sender = os.environ.get("MAIL_DEFAULT_SENDER", os.environ.get("SMTP_FROM", smtp_user)).strip()
-    use_tls = os.environ.get(
-        "MAIL_USE_TLS", os.environ.get("SMTP_USE_TLS", "true")
-    ).lower() == "true"
-    login_url = request.host_url.rstrip("/") + url_for("login")
-
-    if not smtp_host or not sender:
-        raise RuntimeError("Email sharing is not configured.")
-    if not smtp_user or not smtp_password:
-        raise RuntimeError("Email authentication is not configured.")
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", customer.email or ""):
-        raise RuntimeError("The customer has no valid email address.")
-
-    message = EmailMessage()
-    message["Subject"] = "Your temporary login password"
-    message["From"] = sender
-    message["To"] = customer.email
-    latest_application = Application.query.filter_by(user_id=customer.id).order_by(Application.created_at.desc()).first()
-    reference = f"LA-{latest_application.id}" if latest_application else f"Customer-{customer.id}"
-    message.set_content(
-        f"Hello {customer.name},\n\n"
-        f"Your temporary password is: {password}\n"
-        "This password is valid for 24 hours only.\n"
-        f"Login with this email: {customer.email}\n"
-        f"Login URL: {login_url}\n\n"
-        "For your security, change this password after logging in."
-        f"\nAccount reference: {reference}"
-    )
-
-    server = smtplib.SMTP(smtp_host, smtp_port, timeout=20)
-    try:
-        if use_tls:
-            server.starttls()
-        server.login(smtp_user, smtp_password)
-        server.send_message(message)
-    finally:
-        server.quit()
-
-
 @app.route("/admin/customers/<int:user_id>/share", methods=["POST"])
 @app.route("/admin/customers/<int:user_id>/generate-password", methods=["POST"])
 @login_required
@@ -1113,7 +1046,6 @@ def admin_share_customer_password(user_id):
 
     password = assign_temporary_password(customer)
     try:
-        send_temporary_password_email(customer, password)
         customer.password_hash = generate_password_hash(password)
         customer.must_change_password = True
         customer.temp_password_expires_at = datetime.utcnow() + timedelta(hours=24)
@@ -1121,10 +1053,10 @@ def admin_share_customer_password(user_id):
         session["temporary_password_to_display"] = password
         session["temporary_password_customer_id"] = customer.id
         session["temporary_password_last_request"] = now_epoch
-        flash(f"Temporary password sent to {customer.email}.", "success")
-    except (RuntimeError, smtplib.SMTPException, OSError, ValueError, SQLAlchemyError):
+        flash("Temporary password generated. Copy it and share it with the customer.", "success")
+    except SQLAlchemyError:
         db.session.rollback()
-        flash("Temporary password email could not be sent. The existing password was not changed.", "error")
+        flash("Temporary password could not be generated.", "error")
     return redirect(url_for("admin_register_customers"))
 
 
