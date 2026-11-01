@@ -31,6 +31,10 @@ TRANSLATIONS = {
         "actions": "Actions", "reference_optional": "Reference (optional)", "verify": "Verify", "reject": "Reject",
         "no_payments_found": "No payments found.", "application": "Application", "choose_application": "Choose an application",
         "save": "Save", "applicant": "Applicant", "show_password": "Show password", "hide_password": "Hide password",
+        "forgot_password": "Forgot Password", "mobile_number": "Mobile Number", "new_password": "New Password",
+        "confirm_new_password": "Confirm New Password", "ok": "OK", "back_to_login": "Back to Login",
+        "password_updated": "Password updated successfully", "passwords_do_not_match": "Passwords do not match.",
+        "account_not_found": "No account found with this email.", "password_min_length": "Password must be at least 6 characters.",
     },
     "te": {
         "app_name": "మొబైల్ లోన్ యాప్",
@@ -62,6 +66,10 @@ TRANSLATIONS = {
         "actions": "చర్యలు", "reference_optional": "రిఫరెన్స్ (ఐచ్ఛికం)", "verify": "ధృవీకరించండి", "reject": "తిరస్కరించండి",
         "no_payments_found": "చెల్లింపులు కనుగొనబడలేదు.", "application": "దరఖాస్తు", "choose_application": "దరఖాస్తును ఎంచుకోండి",
         "save": "సేవ్", "applicant": "దరఖాస్తుదారు", "show_password": "పాస్‌వర్డ్ చూపించండి", "hide_password": "పాస్‌వర్డ్ దాచండి",
+        "forgot_password": "పాస్‌వర్డ్ మర్చిపోయారా", "mobile_number": "మొబైల్ నంబర్", "new_password": "కొత్త పాస్‌వర్డ్",
+        "confirm_new_password": "కొత్త పాస్‌వర్డ్‌ను నిర్ధారించండి", "ok": "సరే", "back_to_login": "లాగిన్‌కు తిరిగి వెళ్ళండి",
+        "password_updated": "పాస్‌వర్డ్ విజయవంతంగా నవీకరించబడింది", "passwords_do_not_match": "పాస్‌వర్డ్‌లు సరిపోలడం లేదు.",
+        "account_not_found": "ఈ ఇమెయిల్‌తో ఖాతా కనుగొనబడలేదు.", "password_min_length": "పాస్‌వర్డ్ కనీసం 6 అక్షరాలు ఉండాలి.",
     },
     "hi": {
         "app_name": "मोबाइल लोन ऐप",
@@ -93,5 +101,9 @@ TRANSLATIONS = {
         "actions": "कार्य", "reference_optional": "संदर्भ (वैकल्पिक)", "verify": "सत्यापित करें", "reject": "अस्वीकार करें",
         "no_payments_found": "कोई भुगतान नहीं मिला।", "application": "आवेदन", "choose_application": "आवेदन चुनें",
         "save": "सहेजें", "applicant": "आवेदक", "show_password": "पासवर्ड दिखाएँ", "hide_password": "पासवर्ड छिपाएँ",
+        "forgot_password": "पासवर्ड भूल गए", "mobile_number": "मोबाइल नंबर", "new_password": "नया पासवर्ड",
+        "confirm_new_password": "नए पासवर्ड की पुष्टि करें", "ok": "ठीक है", "back_to_login": "लॉगिन पर वापस जाएँ",
+        "password_updated": "पासवर्ड सफलतापूर्वक अपडेट किया गया", "passwords_do_not_match": "पासवर्ड मेल नहीं खाते।",
+        "account_not_found": "इस ईमेल से कोई खाते नहीं मिला।", "password_min_length": "पासवर्ड कम से कम 6 अक्षरों का होना चाहिए।",
     },
 }

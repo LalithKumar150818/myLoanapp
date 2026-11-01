@@ -13,7 +13,7 @@
     <br><button class="btn full">{{ t('login') }}</button>
   </form>
   {% if not admin %}
-    <p><a href="{{ url_for('forgot_password') }}">Forgot Password?</a></p>
+    <p><a href="{{ url_for('forgot_password') }}">{{ t('forgot_password') }}?</a></p>
     <p>{{ t('no_account') }} <a href="{{ url_for('register') }}">{{ t('register') }}</a> &nbsp;|&nbsp; <a href="{{ url_for('admin_login') }}">{{ t('admin_login') }}</a></p>
   {% else %}
     <p><a href="{{ url_for('login') }}">← {{ t('login') }}</a></p>

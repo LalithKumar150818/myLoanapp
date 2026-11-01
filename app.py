@@ -508,111 +508,34 @@ def smtp_message(customer, subject, body):
         server.quit()
 
 
-def password_reset_customer(identifier):
-    identifier = identifier.strip().lower()
-    if "@" in identifier:
-        return User.query.filter(db.func.lower(User.email) == identifier, User.is_admin == False).first()
-    digits = re.sub(r"\D", "", identifier)
-    candidates = [digits, "+" + digits]
-    if digits.startswith("91") and len(digits) == 12:
-        candidates.append(digits[2:])
-        candidates.append("+91" + digits[2:])
-    if re.fullmatch(r"[6-9]\d{9}", digits):
-        candidates.extend(["+91" + digits, digits])
-    return User.query.filter(User.phone.in_(candidates), User.is_admin == False).first()
+def phone_digits_match(left, right):
+    left_digits = re.sub(r"\D", "", left or "")
+    right_digits = re.sub(r"\D", "", right or "")
+    return bool(left_digits and right_digits) and left_digits[-10:] == right_digits[-10:]
 
 
 @app.route("/forgot-password", methods=["GET", "POST"])
 def forgot_password():
     if request.method == "POST":
-        identifier = request.form.get("identifier", "").strip()
-        now = datetime.utcnow().timestamp()
-        requested_at = session.get("password_reset_requested_at", 0)
-        if now - requested_at < 60:
-            flash("If the account exists, a verification code was sent. Please wait before requesting another code.", "info")
-            return render_template("forgot_password.html", step="request")
-
-        customer = password_reset_customer(identifier)
-        session["password_reset_requested_at"] = now
-        if customer:
-            otp = "".join(secrets.choice("0123456789") for _ in range(6))
-            session["password_reset_user_id"] = customer.id
-            session["password_reset_code_hash"] = generate_password_hash(otp)
-            session["password_reset_expires_at"] = now + 10 * 60
-            session["password_reset_attempts"] = 0
-            session["password_reset_verified"] = False
-            try:
-                smtp_message(
-                    customer,
-                    "Your password reset verification code",
-                    "A password reset was requested for your loan account.\n\n"
-                    f"Verification code: {otp}\n\n"
-                    "This code expires in 10 minutes. If you did not request this, ignore this email."
-                )
-            except (RuntimeError, smtplib.SMTPException, OSError, ValueError):
-                session.pop("password_reset_code_hash", None)
-                session.pop("password_reset_user_id", None)
-        flash("If the account exists and email delivery succeeds, a verification code will be sent.", "success")
-        return render_template("forgot_password.html", step="verify")
-    return render_template("forgot_password.html", step="request")
-
-
-@app.route("/forgot-password/verify", methods=["POST"])
-def verify_password_reset():
-    if not session.get("password_reset_user_id") or not session.get("password_reset_code_hash"):
-        flash("Request a new verification code first.", "error")
-        return redirect(url_for("forgot_password"))
-    if datetime.utcnow().timestamp() > session.get("password_reset_expires_at", 0):
-        flash("The verification code has expired. Request a new one.", "error")
-        return redirect(url_for("forgot_password"))
-    attempts = session.get("password_reset_attempts", 0)
-    if attempts >= 5:
-        flash("Too many incorrect attempts. Request a new verification code.", "error")
-        return redirect(url_for("forgot_password"))
-
-    code = request.form.get("code", "").strip()
-    if not re.fullmatch(r"\d{6}", code) or not check_password_hash(session["password_reset_code_hash"], code):
-        session["password_reset_attempts"] = attempts + 1
-        flash("Invalid verification code.", "error")
-        return render_template("forgot_password.html", step="verify")
-    session["password_reset_verified"] = True
-    session.pop("password_reset_code_hash", None)
-    return redirect(url_for("reset_password"))
-
-
-@app.route("/reset-password", methods=["GET", "POST"])
-def reset_password():
-    customer_id = session.get("password_reset_user_id")
-    if not customer_id or session.get("password_reset_verified") is not True:
-        abort(403)
-    customer = db.session.get(User, customer_id)
-    if customer is None or customer.is_admin:
-        session.clear()
-        abort(403)
-
-    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        phone = request.form.get("phone", "").strip()
         password = request.form.get("password", "")
         confirm_password = request.form.get("confirm_password", "")
-        if len(password) < 8:
-            flash("Password must be at least 8 characters.", "error")
-        elif not re.search(r"[a-z]", password) or not re.search(r"[A-Z]", password) or not re.search(r"\d", password) or not re.search(r"[!@#$%^&*]", password):
-            flash("Password must include uppercase, lowercase, a number, and a special character.", "error")
+        customer = User.query.filter(db.func.lower(User.email) == email, User.is_admin == False).first()
+        if not customer or not phone_digits_match(customer.phone, phone):
+            flash("No account found with this email.", "error")
         elif password != confirm_password:
             flash("Passwords do not match.", "error")
-        elif check_password_hash(customer.password_hash, password):
-            flash("New password must differ from your current password.", "error")
+        elif len(password) < 6:
+            flash("Password must be at least 6 characters.", "error")
         else:
             customer.password_hash = generate_password_hash(password)
             customer.must_change_password = False
             customer.temp_password_expires_at = None
             db.session.commit()
-            session.pop("password_reset_user_id", None)
-            session.pop("password_reset_verified", None)
-            session.pop("password_reset_expires_at", None)
-            session.pop("password_reset_attempts", None)
-            flash("Password reset successfully. You can now log in.", "success")
+            flash("Password updated successfully", "success")
             return redirect(url_for("login"))
-    return render_template("reset_password.html", reset=True)
+    return render_template("forgot_password.html", form=request.form if request.method == "POST" else {})
 
 
 @app.route("/admin/login", methods=["GET", "POST"])

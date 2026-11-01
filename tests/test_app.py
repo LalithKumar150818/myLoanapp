@@ -419,12 +419,7 @@ def test_expired_temporary_password_is_rejected(app_instance, client):
     assert b"Temporary password has expired" in response.data
 
 
-def test_forgot_password_requires_verified_code(app_instance, client):
-    response = client.get("/reset-password")
-    assert response.status_code == 403
-
-
-def test_forgot_password_reset_changes_password(app_instance, client):
+def test_forgot_password_updates_matching_email_and_mobile(app_instance, client):
     with app_instance.app_context():
         customer = application.User(
             name="Reset Customer", phone="+919950000004", email="reset@example.com",
@@ -434,31 +429,20 @@ def test_forgot_password_reset_changes_password(app_instance, client):
         application.db.session.commit()
 
     token = csrf_token(client)
-    with patch.object(application, "smtp_message") as send_mail:
-        response = client.post("/forgot-password", data={
-            "_csrf": token, "identifier": "reset@example.com"
-        })
-    assert response.status_code == 200
-    assert send_mail.call_count == 1
-    email_body = send_mail.call_args.args[2]
-    otp = email_body.split("Verification code: ", 1)[1].split("\n", 1)[0]
-
-    with client.session_transaction() as test_session:
-        reset_user_id = test_session["password_reset_user_id"]
-        assert test_session["password_reset_attempts"] == 0
-
-    response = client.post("/forgot-password/verify", data={"_csrf": token, "code": otp})
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/reset-password")
-
     response = client.post("/reset-password", data={
         "_csrf": token, "password": "NewPassword123!", "confirm_password": "NewPassword123!"
+    })
+    assert response.status_code == 404
+
+    response = client.post("/forgot-password", data={
+        "_csrf": token, "email": "reset@example.com", "phone": "9950000004",
+        "password": "NewPass", "confirm_password": "NewPass"
     })
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/login")
     with app_instance.app_context():
-        customer = application.db.session.get(application.User, reset_user_id)
-        assert application.check_password_hash(customer.password_hash, "NewPassword123!")
+        customer = application.User.query.filter_by(email="reset@example.com").first()
+        assert application.check_password_hash(customer.password_hash, "NewPass")
         assert not application.check_password_hash(customer.password_hash, "OldPassword123!")
 
 
