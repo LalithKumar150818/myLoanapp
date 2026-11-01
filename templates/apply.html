@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-  <h2>{{ t('apply_now') }}</h2>
+  <h2>{{ 'Edit Loan Application' if editing else t('apply_now') }}</h2>
   <form method="post" enctype="multipart/form-data">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>{{ t('full_name') }}</label>
@@ -52,7 +52,7 @@
     <label style="margin-top:12px"><input type="checkbox" name="agree" value="1" required {{ 'checked' if form.get('agree') }}> {{ t('agree') }}</label>
 
     {% if qr_ready %}
-    <br><button class="btn full">{{ t('submit') }}</button>
+    <br><button class="btn full">{{ 'Save Changes' if editing else t('submit') }}</button>
     {% else %}
     <br><button class="btn full" type="button" disabled>Payment QR not available</button>
     {% endif %}

@@ -65,12 +65,19 @@ document.querySelectorAll('.password-toggle').forEach(function (button) {
   var id = button.dataset.passwordTarget || button.getAttribute('aria-controls');
   var field = document.getElementById(id);
   if (!field) return;
+  function eyeIcon(hidden) {
+    if (!hidden) {
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5c-5 0-9 4.5-10 7 1 2.5 5 7 10 7s9-4.5 10-7c-1-2.5-5-7-10-7zm0 11.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9zm0-2a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/></svg>';
+    }
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5c-5 0-9 4.5-10 7 1 2.5 5 7 10 7s9-4.5 10-7c-1-2.5-5-7-10-7zm0 11.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9zm0-2a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/><path class="eye-slash" d="M3 3l18 18"/></svg>';
+  }
+  button.innerHTML = eyeIcon(true);
   button.addEventListener('click', function () {
     var showing = field.type === 'text';
     field.type = showing ? 'password' : 'text';
-    button.textContent = showing ? '👁' : '*';
     button.title = showing ? 'Show password' : 'Hide password';
     button.setAttribute('aria-label', button.title);
+    button.innerHTML = eyeIcon(showing);
   });
 });
 </script>

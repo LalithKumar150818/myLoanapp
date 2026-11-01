@@ -571,6 +571,101 @@ def files(name):
     return send_from_directory(UPLOAD_DIR, name)
 
 
+@app.route("/applications/<int:application_id>/edit", methods=["GET", "POST"])
+@login_required
+def edit_application(application_id):
+    if g.user.is_admin:
+        return redirect(url_for("admin_dashboard"))
+    loan_application = db.session.get(Application, application_id)
+    if loan_application is None or loan_application.user_id != g.user.id:
+        abort(404)
+
+    existing_files = {
+        "aadhaar": loan_application.aadhaar_file,
+        "pan": loan_application.pan_file,
+        "photo": loan_application.photo_file,
+        "payment": loan_application.payment_file,
+    }
+    if request.method == "GET":
+        form = {
+            "applicant_name": loan_application.applicant_name,
+            "relation_type": loan_application.relation_type,
+            "relation_name": loan_application.relation_name,
+            "address": loan_application.address,
+            "loan_amount": loan_application.loan_amount,
+            "repayment_months": loan_application.repayment_months,
+            "agree": True,
+        }
+        return render_template("apply.html", form=form, field_errors={}, uploaded_files=existing_files,
+                               editing=True, application=loan_application,
+                               conditions=get_setting("conditions", DEFAULT_CONDITIONS),
+                               qr_ready=True, upi_id=get_setting("upi_id", "").strip())
+
+    f = request.form
+    name = f.get("applicant_name", "").strip()
+    relation_type = f.get("relation_type", "")
+    relation_name = f.get("relation_name", "").strip()
+    address = f.get("address", "").strip()
+    field_errors = {}
+    errors = []
+    try:
+        amount = int(f.get("loan_amount", ""))
+        months = int(f.get("repayment_months", ""))
+    except ValueError:
+        amount = months = 0
+    if len(name) < 2:
+        errors.append("Enter your name."); field_errors["applicant_name"] = "Enter your name."
+    if relation_type not in ("S/o", "D/o", "W/o"):
+        errors.append("Select S/o, D/o or W/o."); field_errors["relation_type"] = "Select S/o, D/o or W/o."
+    if len(relation_name) < 2:
+        errors.append("Enter father/husband name."); field_errors["relation_name"] = "Enter father/husband name."
+    if len(address) < 10:
+        errors.append("Enter your full address."); field_errors["address"] = "Enter your full address."
+    if not MIN_LOAN <= amount <= MAX_LOAN:
+        errors.append(f"Loan amount must be between ₹{MIN_LOAN:,} and ₹{MAX_LOAN:,}."); field_errors["loan_amount"] = "Check the loan amount."
+    if not MIN_MONTHS <= months <= MAX_MONTHS:
+        errors.append(f"Repayment period must be {MIN_MONTHS}-{MAX_MONTHS} months."); field_errors["repayment_months"] = "Check the repayment period."
+    if not f.get("agree"):
+        errors.append("You must agree to the conditions."); field_errors["agree"] = "You must agree to the conditions."
+
+    document_fields = (
+        ("aadhaar", {"jpg", "jpeg", "png", "pdf"}),
+        ("pan", {"jpg", "jpeg", "png", "pdf"}),
+        ("photo", {"jpg", "jpeg", "png"}),
+        ("payment", {"jpg", "jpeg", "png"}),
+    )
+    uploaded_files = existing_files.copy()
+    for field, allowed in document_fields:
+        saved = save_upload(request.files.get(field), allowed)
+        if saved:
+            uploaded_files[field] = saved
+        if not uploaded_files.get(field):
+            errors.append(f"Upload a valid {field} file.")
+            field_errors[field] = "Upload a valid file."
+
+    if errors:
+        for error in errors:
+            flash(error, "error")
+        return render_template("apply.html", form=f, field_errors=field_errors,
+                               uploaded_files=uploaded_files, editing=True, application=loan_application,
+                               conditions=get_setting("conditions", DEFAULT_CONDITIONS),
+                               qr_ready=True, upi_id=get_setting("upi_id", "").strip())
+
+    loan_application.applicant_name = name
+    loan_application.relation_type = relation_type
+    loan_application.relation_name = relation_name
+    loan_application.address = address
+    loan_application.loan_amount = amount
+    loan_application.repayment_months = months
+    loan_application.aadhaar_file = uploaded_files["aadhaar"]
+    loan_application.pan_file = uploaded_files["pan"]
+    loan_application.photo_file = uploaded_files["photo"]
+    loan_application.payment_file = uploaded_files["payment"]
+    db.session.commit()
+    flash("Application updated successfully!", "success")
+    return redirect(url_for("dashboard"))
+
+
 @app.route("/qr")
 @login_required
 def qr_image():

@@ -383,3 +383,57 @@ def test_expired_temporary_password_is_rejected(app_instance, client):
         "_csrf": token, "identifier": "expired@example.com", "password": "Temporary123!"
     })
     assert b"Temporary password has expired" in response.data
+
+
+def test_customer_can_edit_owned_application(app_instance, client):
+    with app_instance.app_context():
+        customer = application.User(name="Edit Customer", phone="9550000000", email="edit.customer@example.com",
+                                    password_hash=application.generate_password_hash("Password123!"))
+        application.db.session.add(customer)
+        application.db.session.flush()
+        loan = application.Application(
+            user_id=customer.id, applicant_name="Original Name", relation_type="S/o",
+            relation_name="Original Father", address="Original address with enough text",
+            loan_amount=10000, repayment_months=12, aadhaar_file="a.jpg", pan_file="p.jpg",
+            photo_file="photo.jpg", payment_file="pay.jpg", fee_amount=36)
+        application.db.session.add(loan)
+        application.db.session.commit()
+        customer_id, loan_id = customer.id, loan.id
+
+    with client.session_transaction() as test_session:
+        test_session["uid"] = customer_id
+    token = csrf_token(client)
+    response = client.post("/applications/%d/edit" % loan_id, data={
+        "_csrf": token, "applicant_name": "Updated Name", "relation_type": "S/o",
+        "relation_name": "Updated Father", "address": "Updated address with enough text",
+        "loan_amount": 25000, "repayment_months": 24, "agree": "1"
+    }, content_type="multipart/form-data")
+    assert response.status_code == 302
+    with app_instance.app_context():
+        updated = application.db.session.get(application.Application, loan_id)
+        assert updated.applicant_name == "Updated Name"
+        assert updated.loan_amount == 25000
+        assert updated.aadhaar_file == "a.jpg"
+
+
+def test_customer_cannot_edit_another_customers_application(app_instance, client):
+    with app_instance.app_context():
+        customer = application.User(name="Owner", phone="9550000001", email="owner@example.com",
+                                    password_hash=application.generate_password_hash("Password123!"))
+        other = application.User(name="Other", phone="9550000002", email="other@example.com",
+                                 password_hash=application.generate_password_hash("Password123!"))
+        application.db.session.add_all([customer, other])
+        application.db.session.flush()
+        loan = application.Application(
+            user_id=other.id, applicant_name="Other Customer", relation_type="S/o",
+            relation_name="Father", address="Other customer address here",
+            loan_amount=15000, repayment_months=12, aadhaar_file="o-a.jpg", pan_file="o-p.jpg",
+            photo_file="o-photo.jpg", payment_file="o-pay.jpg", fee_amount=36)
+        application.db.session.add(loan)
+        application.db.session.commit()
+        customer_id, loan_id = customer.id, loan.id
+
+    with client.session_transaction() as test_session:
+        test_session["uid"] = customer_id
+    response = client.get("/applications/%d/edit" % loan_id)
+    assert response.status_code == 404
