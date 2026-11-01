@@ -37,9 +37,13 @@
       {% if qr_ready %}
         <p>{{ t('scan_qr') }}</p>
         <img src="{{ url_for('qr_image') }}" alt="QR">
-        <button type="button" class="btn small scanner-open" id="open-qr-scanner">Scan QR with camera</button>
         {% if upi_id %}
-        <a class="btn payment-link" href="upi://pay?pa={{ upi_id | urlencode }}&amp;pn=Loan%20Application&amp;am=36&amp;cu=INR">Pay ₹36 with UPI</a>
+        <div class="payment-actions">
+          <a class="payment-link upi-payment-button" href="upi://pay?pa={{ upi_id | urlencode }}&amp;pn=Loan%20Application&amp;am=36&amp;cu=INR">
+            <span class="upi-payment-icon" aria-hidden="true">&#8377;</span>
+            <span>Pay ₹36 with UPI</span>
+          </a>
+        </div>
         {% endif %}
       {% else %}
         <p class="payment-unavailable">Payment is not available yet. The administrator must upload a QR code.</p>
@@ -70,171 +74,6 @@
     {% endif %}
   </form>
 </div>
-{% if qr_ready %}
-<div class="qr-scanner-modal" id="qr-scanner-modal" role="dialog" aria-modal="true" aria-labelledby="qr-scanner-title" hidden>
-  <div class="qr-scanner-panel">
-    <div class="qr-scanner-head">
-      <h3 id="qr-scanner-title">Scan Payment QR</h3>
-      <button type="button" class="qr-scanner-close" id="close-qr-scanner" aria-label="Close QR scanner">&times;</button>
-    </div>
-    <div id="qr-reader" aria-label="QR camera preview"></div>
-    <p class="qr-scanner-status" id="qr-scanner-status" role="status">Starting camera...</p>
-    <div class="qr-scan-result" id="qr-scan-result" hidden>
-      <strong>QR code detected.</strong>
-      <p id="qr-scanned-value"></p>
-      <a class="btn small qr-payment-action" id="qr-payment-action" hidden>Open payment</a>
-    </div>
-  </div>
-</div>
-<script>
-(function () {
-  if (window.__loanQrScannerInitialized) return;
-  window.__loanQrScannerInitialized = true;
-
-  var openButton = document.getElementById('open-qr-scanner');
-  var modal = document.getElementById('qr-scanner-modal');
-  var closeButton = document.getElementById('close-qr-scanner');
-  var statusElement = document.getElementById('qr-scanner-status');
-  var readerElement = document.getElementById('qr-reader');
-  var resultElement = document.getElementById('qr-scan-result');
-  var valueElement = document.getElementById('qr-scanned-value');
-  var paymentAction = document.getElementById('qr-payment-action');
-  var scanner = null;
-  var startToken = 0;
-  var stopping = false;
-
-  function showStatus(message, isError) {
-    statusElement.textContent = message;
-    statusElement.className = 'qr-scanner-status' + (isError ? ' error' : '');
-  }
-
-  function loadScannerLibrary() {
-    if (window.Html5Qrcode) return Promise.resolve();
-    if (window.__loanQrLibraryPromise) return window.__loanQrLibraryPromise;
-    window.__loanQrLibraryPromise = new Promise(function (resolve, reject) {
-      var script = document.querySelector('script[data-loan-qr-library]');
-      if (!script) {
-        script = document.createElement('script');
-        script.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
-        script.dataset.loanQrLibrary = 'true';
-        script.async = true;
-        document.head.appendChild(script);
-      }
-      script.addEventListener('load', resolve, { once: true });
-      script.addEventListener('error', function () {
-        reject(new Error('The QR scanner library could not be loaded.'));
-      }, { once: true });
-    });
-    return window.__loanQrLibraryPromise;
-  }
-
-  function stopScanner() {
-    var currentScanner = scanner;
-    scanner = null;
-    startToken++;
-    if (!currentScanner) return Promise.resolve();
-    if (typeof currentScanner.stop !== 'function') return Promise.resolve();
-    return currentScanner.stop().catch(function () {}).then(function () {
-      if (currentScanner.clear) currentScanner.clear();
-    }).catch(function () {});
-  }
-
-  async function closeScanner() {
-    if (stopping) return;
-    stopping = true;
-    await stopScanner();
-    stopping = false;
-    modal.hidden = true;
-    document.body.classList.remove('qr-scanner-open');
-    readerElement.replaceChildren();
-  }
-
-  function safePaymentUrl(value) {
-    if (/^upi:\/\//i.test(value)) return value;
-    if (!/^https?:\/\//i.test(value)) return null;
-    try {
-      var parsed = new URL(value);
-      return parsed.protocol === 'https:' ? parsed.href : null;
-    } catch (error) {
-      return null;
-    }
-  }
-
-  async function startScanner() {
-    var token = ++startToken;
-    resultElement.hidden = true;
-    paymentAction.hidden = true;
-    modal.hidden = false;
-    document.body.classList.add('qr-scanner-open');
-
-    if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-      showStatus('Camera access requires HTTPS. Open this page on a secure HTTPS connection.', true);
-      return;
-    }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showStatus('This browser does not support camera access. Use a current Chrome, Edge, Safari, or Firefox browser.', true);
-      return;
-    }
-
-    showStatus('Starting camera...');
-    try {
-      await loadScannerLibrary();
-      if (token !== startToken || modal.hidden) return;
-      scanner = new Html5Qrcode('qr-reader');
-      await scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        function (decodedText) {
-          if (!scanner) return;
-          valueElement.textContent = decodedText;
-          resultElement.hidden = false;
-          var paymentUrl = safePaymentUrl(decodedText);
-          if (paymentUrl) {
-            paymentAction.href = paymentUrl;
-            paymentAction.hidden = false;
-          }
-          showStatus('QR code detected.');
-          closeScanner();
-        },
-        function () {}
-      );
-      if (token !== startToken) await stopScanner();
-      else showStatus('Point the camera at the payment QR code.');
-    } catch (error) {
-      if (token !== startToken) return;
-      var message = error && error.message ? error.message : String(error);
-      if (/permission|denied|notallowed/i.test(message)) {
-        showStatus('Camera permission was denied. Allow camera access in your browser settings and try again.', true);
-      } else if (/not found|no camera|devicesnotfound/i.test(message)) {
-        showStatus('No camera was found on this device.', true);
-      } else {
-        showStatus('Camera could not be started: ' + message, true);
-      }
-    }
-  }
-
-  openButton.addEventListener('click', function (event) {
-    event.preventDefault();
-    if (!modal.hidden) return;
-    startScanner();
-  });
-  closeButton.addEventListener('click', function (event) {
-    event.preventDefault();
-    closeScanner();
-  });
-  modal.addEventListener('click', function (event) {
-    if (event.target === modal) closeScanner();
-  });
-  document.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape' && !modal.hidden) closeScanner();
-  });
-  window.addEventListener('pagehide', closeScanner);
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden && !modal.hidden) closeScanner();
-  });
-})();
-</script>
-{% endif %}
 {% if not editing %}
 <script>
 (function () {

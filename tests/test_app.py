@@ -500,10 +500,11 @@ def test_customer_cannot_edit_another_customers_application(app_instance, client
     assert response.status_code == 404
 
 
-def test_apply_page_includes_non_submitting_camera_scanner(app_instance, client):
+def test_apply_page_has_only_centered_upi_payment_action(app_instance, client):
     with app_instance.app_context():
         setting = application.Setting(key="qr_file", value="payment-qr.png")
-        application.db.session.add(setting)
+        upi_setting = application.Setting(key="upi_id", value="merchant@bank")
+        application.db.session.add_all([setting, upi_setting])
         customer = application.User(name="Scanner Customer", phone="9550000003",
                                     email="scanner.customer@example.com",
                                     password_hash=application.generate_password_hash("Password123!"))
@@ -515,6 +516,7 @@ def test_apply_page_includes_non_submitting_camera_scanner(app_instance, client)
         test_session["uid"] = customer_id
     response = client.get("/apply")
     assert response.status_code == 200
-    assert b'id="open-qr-scanner"' in response.data
-    assert b'type="button"' in response.data
-    assert b'html5-qrcode' in response.data
+    assert b'id="open-qr-scanner"' not in response.data
+    assert b'Scan QR with camera' not in response.data
+    assert b'36 with UPI' in response.data
+    assert b'upi-payment-button' in response.data
