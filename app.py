@@ -216,7 +216,8 @@ def send_sms(phone, message):
             response.read()
         return
 
-    if os.environ.get("OTP_DEV_MODE", "").lower() == "true":
+    local_development = os.environ.get("OTP_DEV_MODE", "").lower() == "true" or not IS_PRODUCTION
+    if local_development:
         otp_match = re.search(r"\b\d{6}\b", message)
         LAST_DEVELOPMENT_SMS_OTP = otp_match.group(0) if otp_match else None
         print(f"Development OTP SMS to {gateway_phone}: {message}")
