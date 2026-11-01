@@ -17,6 +17,8 @@
 
     <label for="email">{{ t('email') }}</label>
     <input id="email" type="email" name="email" class="{{ 'field-error' if field_errors.get('email') }}" value="{{ form.get('email','') }}" required>
+    <label for="address">Address</label>
+    <textarea id="address" name="address" rows="3">{{ form.get('address','') }}</textarea>
     <label for="password">{{ t('password') }}</label>
     <div class="password-field">
       <input id="password" type="password" name="password" class="{{ 'field-error' if field_errors.get('password') }}" minlength="8" required>

@@ -4,6 +4,7 @@
   <h2>{{ 'Edit Loan Application' if editing else t('apply_now') }}</h2>
   <form method="post" enctype="multipart/form-data">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    {% if not editing %}<input type="hidden" name="submission_token" value="{{ submission_token or '' }}">{% endif %}
     <label>{{ t('full_name') }}</label>
     <input name="applicant_name" class="{{ 'field-error' if field_errors.get('applicant_name') }}" value="{{ form.get('applicant_name', user.name) }}" required>
 
@@ -29,6 +30,7 @@
     <input class="{{ 'field-error' if field_errors.get(field) }}" type="file" name="{{ field }}" accept="{{ accept }}" {{ 'required' if not uploaded_files.get(field) else '' }}>
     {% endfor %}
 
+    {% if registration_fee_required %}
     <div class="fee-box">
       <div>{{ t('application_fee') }}</div>
       <div class="amt">₹36</div>
@@ -44,16 +46,25 @@
       {% endif %}
     </div>
 
+    {% if registration_fee_required %}
     <label>{{ t('after_payment') }} — {{ t('upload_screenshot') }}</label>
     {% if uploaded_files.get('payment') %}<div class="retained-file">Selected: {{ uploaded_files['payment'] }}</div>{% endif %}
     <input class="{{ 'field-error' if field_errors.get('payment') }}" type="file" name="payment" accept=".jpg,.jpeg,.png" {{ 'required' if not uploaded_files.get('payment') else '' }}>
+    {% endif %}
+    {% else %}
+    <p class="saved-message">No registration fee is required for this application because the fee has already been paid for your account.</p>
+    {% endif %}
 
     <label>{{ t('conditions') }}</label>
     <div class="cond">{{ conditions }}</div>
     <label style="margin-top:12px"><input type="checkbox" name="agree" value="1" required {{ 'checked' if form.get('agree') }}> {{ t('agree') }}</label>
 
-    {% if qr_ready %}
-    <br><button class="btn full">{{ 'Save Changes' if editing else t('submit') }}</button>
+    {% if qr_ready or not registration_fee_required %}
+    <div class="draft-actions">
+      {% if not editing %}<button class="btn secondary" type="button" id="save-draft">Save as Draft</button>{% endif %}
+      <button class="btn full">{{ 'Save Changes' if editing else t('submit') }}</button>
+    </div>
+    <p id="draft-status" class="saved-message" role="status"></p>
     {% else %}
     <br><button class="btn full" type="button" disabled>Payment QR not available</button>
     {% endif %}
@@ -220,6 +231,38 @@
   window.addEventListener('pagehide', closeScanner);
   document.addEventListener('visibilitychange', function () {
     if (document.hidden && !modal.hidden) closeScanner();
+  });
+})();
+</script>
+{% endif %}
+{% if not editing %}
+<script>
+(function () {
+  var form = document.querySelector('form');
+  var button = document.getElementById('save-draft');
+  var status = document.getElementById('draft-status');
+  var timer;
+  function saveDraft() {
+    var data = new FormData(form);
+    data.delete('submission_token');
+    fetch('{{ url_for("save_application_draft_route") }}', {
+      method: 'POST',
+      body: data,
+      credentials: 'same-origin',
+      headers: {'X-CSRFToken': form.querySelector('[name="_csrf"]').value}
+    }).then(function (response) { return response.json(); })
+      .then(function (result) {
+        status.textContent = result.message || (result.success ? 'Draft saved successfully.' : 'Draft could not be saved.');
+      }).catch(function () { status.textContent = 'Draft could not be saved. Check your connection.'; });
+  }
+  function scheduleSave() {
+    clearTimeout(timer);
+    timer = setTimeout(saveDraft, 1200);
+  }
+  if (button) button.addEventListener('click', saveDraft);
+  form.querySelectorAll('input:not([type="file"]), textarea, select').forEach(function (control) {
+    control.addEventListener('change', scheduleSave);
+    control.addEventListener('input', scheduleSave);
   });
 })();
 </script>

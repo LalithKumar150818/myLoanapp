@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import secrets
 import uuid
@@ -9,7 +10,7 @@ from functools import wraps
 from urllib.parse import quote
 
 from dotenv import load_dotenv
-from flask import (Flask, abort, flash, g, redirect, render_template, request,
+from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, request,
                    send_from_directory, session, url_for)
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import or_
@@ -90,6 +91,9 @@ class User(db.Model):
     is_admin = db.Column(db.Boolean, default=False)
     must_change_password = db.Column(db.Boolean, default=False, nullable=False)
     temp_password_expires_at = db.Column(db.DateTime, nullable=True)
+    address = db.Column(db.Text, nullable=True)
+    profile_completed = db.Column(db.Boolean, default=False, nullable=False)
+    registration_fee_paid = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     applications = db.relationship("Application", backref="user", lazy=True)
 
@@ -111,6 +115,16 @@ class Application(db.Model):
     status = db.Column(db.String(20), default="Pending")
     admin_remarks = db.Column(db.Text, default="")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    application_reference = db.Column(db.String(30), unique=True, nullable=True)
+    submission_token = db.Column(db.String(36), unique=True, nullable=True)
+
+
+class ApplicationDraft(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, unique=True)
+    data_json = db.Column(db.Text, nullable=False, default="{}")
+    documents_json = db.Column(db.Text, nullable=False, default="{}")
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -151,6 +165,14 @@ def ensure_database_columns():
     """Add newly introduced columns without recreating existing tables."""
     with db.engine.connect() as connection:
         if db.engine.url.get_backend_name() == "sqlite":
+            existing_tables = {
+                row[0]
+                for row in connection.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            if "user" not in existing_tables or "application" not in existing_tables:
+                return
             application_columns = {
                 row._mapping["name"]
                 for row in connection.exec_driver_sql("PRAGMA table_info(application)").fetchall()
@@ -158,6 +180,10 @@ def ensure_database_columns():
             if application_columns and "updated_at" not in application_columns:
                 connection.exec_driver_sql("ALTER TABLE application ADD COLUMN updated_at DATETIME")
                 connection.exec_driver_sql("UPDATE application SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)")
+            if application_columns and "application_reference" not in application_columns:
+                connection.exec_driver_sql("ALTER TABLE application ADD COLUMN application_reference VARCHAR(30)")
+            if application_columns and "submission_token" not in application_columns:
+                connection.exec_driver_sql("ALTER TABLE application ADD COLUMN submission_token VARCHAR(36)")
             user_columns = {
                 row._mapping["name"]
                 for row in connection.exec_driver_sql("PRAGMA table_info(user)").fetchall()
@@ -169,9 +195,21 @@ def ensure_database_columns():
             if user_columns and "country_code" not in user_columns:
                 connection.exec_driver_sql("ALTER TABLE user ADD COLUMN country_code VARCHAR(5)")
                 connection.exec_driver_sql("UPDATE user SET country_code = CASE WHEN substr(phone, 1, 3) = '+91' THEN '+91' ELSE country_code END")
+            for column, definition in (
+                ("address", "TEXT"),
+                ("profile_completed", "BOOLEAN DEFAULT 0 NOT NULL"),
+                ("registration_fee_paid", "BOOLEAN DEFAULT 0 NOT NULL"),
+            ):
+                if column not in user_columns:
+                    connection.exec_driver_sql(f"ALTER TABLE user ADD COLUMN {column} {definition}")
             connection.commit()
         else:
             from sqlalchemy import inspect
+            existing_application_columns = {column["name"] for column in inspect(db.engine).get_columns("application")}
+            if "application_reference" not in existing_application_columns:
+                connection.exec_driver_sql("ALTER TABLE application ADD COLUMN application_reference VARCHAR(30)")
+            if "submission_token" not in existing_application_columns:
+                connection.exec_driver_sql("ALTER TABLE application ADD COLUMN submission_token VARCHAR(36)")
             existing_user_columns = {column["name"] for column in inspect(db.engine).get_columns("user")}
             if "must_change_password" not in existing_user_columns:
                 connection.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE NOT NULL")
@@ -179,6 +217,13 @@ def ensure_database_columns():
                 connection.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN temp_password_expires_at TIMESTAMP")
             if "country_code" not in existing_user_columns:
                 connection.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN country_code VARCHAR(5)")
+            for column, definition in (
+                ("address", "TEXT"),
+                ("profile_completed", "BOOLEAN DEFAULT FALSE NOT NULL"),
+                ("registration_fee_paid", "BOOLEAN DEFAULT FALSE NOT NULL"),
+            ):
+                if column not in existing_user_columns:
+                    connection.exec_driver_sql(f"ALTER TABLE \"user\" ADD COLUMN {column} {definition}")
             connection.commit()
 
 
@@ -199,6 +244,11 @@ def init_db():
         db.session.add(User(name="Administrator", phone="0000000000", email=admin_email,
                             password_hash=generate_password_hash(admin_password), is_admin=True))
         db.session.commit()
+    for user in User.query.filter_by(is_admin=False).all():
+        if Application.query.filter_by(user_id=user.id).first() and not user.registration_fee_paid:
+            user.registration_fee_paid = True
+    for application in Application.query.filter(Application.application_reference.is_(None)).all():
+        application.application_reference = application_reference(application.id)
     for application in Application.query.outerjoin(Payment, Payment.application_id == Application.id).filter(Payment.id.is_(None)).all():
         db.session.add(Payment(user_id=application.user_id, application_id=application.id,
                                payment_type="Processing Fee", amount=application.fee_amount or 36))
@@ -374,6 +424,7 @@ def register():
         national_phone = normalize_national_phone(submitted_phone, country_code or "+91")
         phone = (country_code or "+91") + national_phone if country_code and national_phone else None
         email = request.form.get("email", "").strip().lower()
+        address = request.form.get("address", "").strip()
         pw = request.form.get("password", "")
         pw2 = request.form.get("confirm_password", "")
         field_errors = {}
@@ -396,6 +447,7 @@ def register():
                 flash(message, "error")
             return render_template("register.html", form=request.form, field_errors=field_errors)
         u = User(name=name, phone=phone, country_code=country_code, email=email,
+                 address=address, profile_completed=bool(address),
                  password_hash=generate_password_hash(pw))
         db.session.add(u)
         db.session.commit()
@@ -610,6 +662,54 @@ def dashboard():
     return render_template("dashboard.html", apps=apps_)
 
 
+def application_reference(application_id):
+    return f"MYL-{datetime.utcnow():%Y%m%d}-{application_id:06d}"
+
+
+@app.route("/apply/draft", methods=["POST"])
+@login_required
+def save_application_draft_route():
+    if g.user.is_admin:
+        abort(403)
+    uploaded_documents = {}
+    document_fields = {
+        "aadhaar": {"jpg", "jpeg", "png", "pdf"},
+        "pan": {"jpg", "jpeg", "png", "pdf"},
+        "photo": {"jpg", "jpeg", "png"},
+        "payment": {"jpg", "jpeg", "png"},
+    }
+    for field, allowed in document_fields.items():
+        saved = save_upload(request.files.get(field), allowed)
+        if saved:
+            uploaded_documents[field] = saved
+    save_application_draft(g.user, request.form, uploaded_documents)
+    return jsonify({"success": True, "message": "Draft saved successfully."})
+
+
+def load_application_draft(user):
+    draft = ApplicationDraft.query.filter_by(user_id=user.id).first()
+    if not draft:
+        return {}, {}
+    try:
+        return json.loads(draft.data_json or "{}"), json.loads(draft.documents_json or "{}")
+    except (TypeError, ValueError):
+        return {}, {}
+
+
+def save_application_draft(user, form_data, uploaded_documents=None):
+    draft = ApplicationDraft.query.filter_by(user_id=user.id).first() or ApplicationDraft(user_id=user.id)
+    draft.data_json = json.dumps({
+        key: str(form_data.get(key, "")).strip()
+        for key in ("applicant_name", "relation_type", "relation_name", "address", "loan_amount", "repayment_months")
+    }, ensure_ascii=False)
+    _, documents = load_application_draft(user)
+    if uploaded_documents:
+        documents.update(uploaded_documents)
+    draft.documents_json = json.dumps(documents, ensure_ascii=False)
+    db.session.add(draft)
+    db.session.commit()
+
+
 @app.route("/apply", methods=["GET", "POST"])
 @login_required
 def apply_loan():
@@ -619,12 +719,27 @@ def apply_loan():
     fee = 36
     qr = get_setting("qr_file")
     conditions = get_setting("conditions", DEFAULT_CONDITIONS)
-    if not qr:
-        if request.method == "POST":
+    draft_data, draft_documents = load_application_draft(g.user)
+    if not draft_data:
+        draft_data = {
+            "applicant_name": g.user.name,
+            "address": g.user.address or "",
+        }
+    registration_fee_required = not g.user.registration_fee_paid
+    registration_fee_ready = bool(qr) if registration_fee_required else True
+    if not qr and registration_fee_required:
+        if request.method == "POST" and registration_fee_required:
             flash("Payment cannot start until the administrator uploads the QR code.", "error")
         return render_template("apply.html", fee=fee, qr=None, conditions=conditions, form=request.form,
-                               field_errors={}, uploaded_files=session.get("pending_application_files", {}),
-                               qr_ready=False, upi_id=get_setting("upi_id", "").strip())
+                               field_errors={}, uploaded_files=draft_documents,
+                               qr_ready=registration_fee_ready, upi_id=get_setting("upi_id", "").strip(),
+                               registration_fee_required=registration_fee_required)
+    if request.method == "GET":
+        return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form=draft_data,
+                               field_errors={}, uploaded_files=draft_documents, qr_ready=True,
+                               upi_id=get_setting("upi_id", "").strip(),
+                               registration_fee_required=registration_fee_required,
+                               submission_token=uuid.uuid4().hex)
     if request.method == "POST":
         f = request.form
         name = f.get("applicant_name", "").strip()
@@ -652,7 +767,7 @@ def apply_loan():
             errors.append(f"Repayment period must be {MIN_MONTHS}-{MAX_MONTHS} months."); field_errors["repayment_months"] = "Check the repayment period."
         if not f.get("agree"):
             errors.append("You must agree to the conditions."); field_errors["agree"] = "You must agree to the conditions."
-        uploaded = session.setdefault("pending_application_files", {})
+        uploaded = draft_documents.copy()
         document_fields = (
             ("aadhaar", {"jpg", "jpeg", "png", "pdf"}, "Upload a valid Aadhaar file (JPG, PNG or PDF)."),
             ("pan", {"jpg", "jpeg", "png", "pdf"}, "Upload a valid PAN file (JPG, PNG or PDF)."),
@@ -660,13 +775,12 @@ def apply_loan():
             ("payment", {"jpg", "jpeg", "png"}, "Upload the payment screenshot (JPG or PNG)."),
         )
         saved_files = {}
-        field_errors = {}
         for field, allowed, error_message in document_fields:
             saved = save_upload(request.files.get(field), allowed)
             if saved:
                 uploaded[field] = saved
                 session["pending_application_files"] = uploaded
-            if not uploaded.get(field):
+            if not uploaded.get(field) and (field != "payment" or registration_fee_required):
                 errors.append(error_message)
                 field_errors[field] = error_message
             saved_files[field] = uploaded.get(field)
@@ -675,14 +789,33 @@ def apply_loan():
                 flash(e, "error")
             return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form=f,
                                    field_errors=field_errors, uploaded_files=uploaded)
-        aadhaar, pan, photo, payment = (saved_files[n] for n in ("aadhaar", "pan", "photo", "payment"))
-        db.session.add(Application(
+        aadhaar, pan, photo, payment = (saved_files[n] if saved_files.get(n) else uploaded.get(n) for n in ("aadhaar", "pan", "photo", "payment"))
+        if not registration_fee_required:
+            payment = payment or ""
+        submission_token = request.form.get("submission_token", "").strip()
+        existing_application = Application.query.filter_by(submission_token=submission_token).first() if submission_token else None
+        if existing_application:
+            flash(f"Application submitted successfully. Reference: {existing_application.application_reference}.", "success")
+            return redirect(url_for("dashboard"))
+        loan_application = Application(
             user_id=g.user.id, applicant_name=name, relation_type=rel_type, relation_name=rel_name,
             address=address, loan_amount=amount, repayment_months=months, aadhaar_file=aadhaar,
-            pan_file=pan, photo_file=photo, payment_file=payment, fee_amount=fee))
-        db.session.commit()
+            pan_file=pan, photo_file=photo, payment_file=payment,
+            fee_amount=(fee if registration_fee_required else 0))
+        db.session.add(loan_application)
+        db.session.flush()
+        loan_application.application_reference = application_reference(loan_application.id)
+        loan_application.submission_token = submission_token or uuid.uuid4().hex
+        if registration_fee_required:
+            g.user.registration_fee_paid = True
+            db.session.add(Payment(
+                user_id=g.user.id, application_id=loan_application.id,
+                payment_type="Registration Fee", amount=fee, status="Pending",
+                reference=loan_application.application_reference))
+        db.session.delete(ApplicationDraft.query.filter_by(user_id=g.user.id).first())
         session.pop("pending_application_files", None)
-        flash("Application submitted successfully!", "success")
+        db.session.commit()
+        flash(f"Application submitted successfully. Reference: {loan_application.application_reference}.", "success")
         return redirect(url_for("dashboard"))
     return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form={},
                            field_errors={}, uploaded_files=session.get("pending_application_files", {}),
