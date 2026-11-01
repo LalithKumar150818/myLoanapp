@@ -2,15 +2,48 @@
 {% block content %}
 <div class="card">
   <h2>{{ t('register') }}</h2>
-  <form method="post">
+  <form method="post" id="register-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <label>{{ t('full_name') }}</label><input name="name" value="{{ form.get('name','') }}" required>
-    <label>{{ t('phone') }}</label><input name="phone" inputmode="numeric" maxlength="10" value="{{ form.get('phone','') }}" required>
-    <label>{{ t('email') }}</label><input type="email" name="email" value="{{ form.get('email','') }}" required>
-    <label>{{ t('password') }}</label><input type="password" name="password" minlength="8" required>
-    <label>{{ t('confirm_password') }}</label><input type="password" name="confirm_password" minlength="8" required>
+    <label for="name">{{ t('full_name') }}</label>
+    <input id="name" name="name" class="{{ 'field-error' if field_errors.get('name') }}" value="{{ form.get('name','') }}" required>
+    <label for="phone">{{ t('phone') }}</label>
+    <div class="otp-row">
+      <input id="phone" name="phone" class="{{ 'field-error' if field_errors.get('phone') or field_errors.get('otp') }}" inputmode="numeric" maxlength="10" value="{{ form.get('phone','') }}" required>
+      <button class="btn small" id="send-otp" type="button">Send OTP</button>
+    </div>
+    <label for="otp">Mobile OTP</label>
+    <div class="otp-row">
+      <input id="otp" name="otp" class="{{ 'field-error' if field_errors.get('otp') }}" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="Enter 6-digit OTP">
+      <button class="btn small secondary" id="verify-otp" type="button">Verify OTP</button>
+    </div>
+    <div id="otp-status" class="otp-status" role="status"></div>
+    <label for="email">{{ t('email') }}</label>
+    <input id="email" type="email" name="email" class="{{ 'field-error' if field_errors.get('email') }}" value="{{ form.get('email','') }}" required>
+    <label for="password">{{ t('password') }}</label><input id="password" type="password" name="password" class="{{ 'field-error' if field_errors.get('password') }}" minlength="8" required>
+    <label for="confirm_password">{{ t('confirm_password') }}</label><input id="confirm_password" type="password" name="confirm_password" class="{{ 'field-error' if field_errors.get('confirm_password') }}" minlength="8" required>
     <br><button class="btn full">{{ t('register') }}</button>
   </form>
+  <script>
+  (function () {
+    const csrf = document.querySelector('#register-form input[name="_csrf"]').value;
+    const phone = document.getElementById('phone');
+    const otp = document.getElementById('otp');
+    const status = document.getElementById('otp-status');
+    function body(extra) { const data = new URLSearchParams(extra); data.set('_csrf', csrf); return data; }
+    async function request(url, extra, button) {
+      button.disabled = true;
+      try {
+        const response = await fetch(url, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body(extra)});
+        const result = await response.json();
+        status.textContent = result.message + (result.development_otp ? ' Development OTP: ' + result.development_otp : '');
+        status.className = 'otp-status ' + (result.ok ? 'success' : 'error');
+      } catch (_) { status.textContent = 'Unable to complete OTP request.'; status.className = 'otp-status error'; }
+      button.disabled = false;
+    }
+    document.getElementById('send-otp').addEventListener('click', function () { request('{{ url_for("send_mobile_otp") }}', {phone:phone.value}, this); });
+    document.getElementById('verify-otp').addEventListener('click', function () { request('{{ url_for("verify_mobile_otp") }}', {phone:phone.value, otp:otp.value}, this); });
+  })();
+  </script>
   <p>{{ t('have_account') }} <a href="{{ url_for('login') }}">{{ t('login') }}</a></p>
 </div>
 {% endblock %}

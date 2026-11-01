@@ -2,10 +2,18 @@
 {% block width %}wide{% endblock %}
 {% block content %}
 <h2>{{ t('admin_panel') }}</h2>
+<div class="admin-workflow" aria-label="Admin controls">
+  <div class="admin-workflow-step"><b>1</b><span>Register Customers</span></div>
+  <div class="admin-workflow-step"><b>2</b><span>Review Applications</span></div>
+  <div class="admin-workflow-step"><b>3</b><span>Verify Payments</span></div>
+  <div class="admin-workflow-step"><b>4</b><span>Update Status</span></div>
+</div>
 <div class="stats">
-  <div class="stat"><b>{{ total }}</b>Total</div>
-  {% for s, c in counts.items() %}<div class="stat"><b>{{ c }}</b>{{ s }}</div>{% endfor %}
-  <div class="stat"><b>{{ users }}</b>Users</div>
+  <div class="stat"><b>{{ users }}</b>Registered Customers</div>
+  <div class="stat"><b>{{ total }}</b>Total Applications</div>
+  <div class="stat"><b>{{ counts['Pending'] }}</b>Pending</div>
+  <div class="stat"><b>{{ counts['Approved'] }}</b>Approved</div>
+  <div class="stat"><b>{{ counts['Rejected'] }}</b>Rejected</div>
 </div>
 <div class="filters">
   <a href="{{ url_for('admin_dashboard') }}" class="{{ 'active' if not current }}">All</a>

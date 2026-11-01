@@ -3,6 +3,12 @@
 {% block content %}
 <div class="card">
   <h2>{{ t('dashboard') }}</h2>
+  <div class="stats customer-stats">
+    <div class="stat"><b>{{ apps|length }}</b>Total Loan Applications</div>
+    <div class="stat"><b>{{ apps|selectattr('status', 'equalto', 'Pending')|list|length }}</b>Pending</div>
+    <div class="stat"><b>{{ apps|selectattr('status', 'equalto', 'Approved')|list|length }}</b>Approved</div>
+    <div class="stat"><b>{{ apps|selectattr('status', 'equalto', 'Rejected')|list|length }}</b>Rejected</div>
+  </div>
   {% if apps %}
   <div class="table-wrap"><table>
     <tr><th>#</th><th>{{ t('date') }}</th><th>{{ t('amount') }}</th><th>{{ t('repayment_months') }}</th><th>{{ t('status') }}</th><th>{{ t('remarks') }}</th></tr>

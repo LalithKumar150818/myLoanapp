@@ -30,6 +30,14 @@ def csrf_token(client):
         return test_session["_csrf"]
 
 
+def verify_registration_otp(client, token, phone):
+    response = client.post("/register/send-mobile-otp", data={"_csrf": token, "phone": phone})
+    assert response.status_code == 200
+    otp = response.get_json()["development_otp"]
+    response = client.post("/register/verify-mobile-otp", data={"_csrf": token, "phone": phone, "otp": otp})
+    assert response.status_code == 200
+
+
 @pytest.fixture()
 def app_instance(tmp_path):
     application.app.config.update(TESTING=True)
@@ -66,6 +74,7 @@ def test_home_page_returns_successfully(client):
 
 def test_registration_and_login(client):
     token = csrf_token(client)
+    verify_registration_otp(client, token, "9876543210")
     response = client.post("/register", data={
         "_csrf": token,
         "name": "Test User",
@@ -111,6 +120,7 @@ def test_unauthenticated_user_cannot_access_admin_dashboard(client):
 
 def test_registered_user_cannot_access_admin_dashboard(client):
     token = csrf_token(client)
+    verify_registration_otp(client, token, "9876543211")
     response = client.post("/register", data={
         "_csrf": token,
         "name": "Regular User",
@@ -124,3 +134,67 @@ def test_registered_user_cannot_access_admin_dashboard(client):
     response = client.get("/admin")
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/admin/login")
+
+
+def test_customer_home_hides_admin_workflow_and_centered_apply_is_present(client):
+    response = client.get("/")
+    assert b"Register Customers" not in response.data
+    assert b"Review Applications" not in response.data
+    assert b"Verify Payments" not in response.data
+    assert b"Update Status" not in response.data
+    assert b"customer-hero" in response.data
+    assert b"hero-apply" in response.data
+
+
+def test_admin_dashboard_requires_admin_role(app_instance, client):
+    with app_instance.app_context():
+        admin = application.User(name="Admin User", phone="9000000000", email="admin@example.com",
+                                 password_hash=application.generate_password_hash("AdminPassword123!"), is_admin=True)
+        application.db.session.add(admin)
+        application.db.session.commit()
+        admin_id = admin.id
+
+    token = csrf_token(client)
+    response = client.post("/admin/login", data={
+        "_csrf": token,
+        "identifier": "admin@example.com",
+        "password": "AdminPassword123!",
+    })
+    assert response.status_code == 200 or response.status_code == 302
+
+    with client.session_transaction() as test_session:
+        test_session["uid"] = admin_id
+
+    response = client.get("/admin")
+    assert response.status_code == 200
+    assert b"Registered Customers" in response.data
+    assert b"Total Applications" in response.data
+
+
+def test_customer_dashboard_only_lists_their_application(app_instance, client):
+    with app_instance.app_context():
+        first = application.User(name="First Customer", phone="9111111111", email="first@example.com",
+                                 password_hash=application.generate_password_hash("Password123!"), is_admin=False)
+        second = application.User(name="Second Customer", phone="9222222222", email="second@example.com",
+                                  password_hash=application.generate_password_hash("Password123!"), is_admin=False)
+        application.db.session.add_all([first, second])
+        application.db.session.flush()
+        application.db.session.add_all([
+            application.Application(user_id=first.id, applicant_name="First Application", relation_type="S/o",
+                                    relation_name="Father", address="First customer address", loan_amount=10000,
+                                    repayment_months=12, aadhaar_file="1.jpg", pan_file="2.jpg", photo_file="3.jpg",
+                                    payment_file="4.jpg", fee_amount=36, status="Pending"),
+            application.Application(user_id=second.id, applicant_name="Second Private Application", relation_type="S/o",
+                                    relation_name="Father", address="Second customer address", loan_amount=20000,
+                                    repayment_months=12, aadhaar_file="5.jpg", pan_file="6.jpg", photo_file="7.jpg",
+                                    payment_file="8.jpg", fee_amount=36, status="Approved"),
+        ])
+        application.db.session.commit()
+        first_id = first.id
+
+    with client.session_transaction() as test_session:
+        test_session["uid"] = first_id
+    response = client.get("/dashboard")
+    assert response.status_code == 200
+    assert "₹10,000".encode("utf-8") in response.data
+    assert "₹20,000".encode("utf-8") not in response.data

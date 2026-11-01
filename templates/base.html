@@ -7,21 +7,20 @@
 </head>
 <body>
 <nav class="nav">
+  {% if not user %}
+  <button class="menu-toggle" type="button" aria-label="Open navigation" aria-controls="side-menu" aria-expanded="false">&#9776;</button>
+  {% endif %}
   <a href="{{ url_for('index') }}" class="brand">📱 {{ t('app_name') }}<small>APPLY FOR LOAN ONLINE</small></a>
   <div class="nav-links">
-    <a href="{{ url_for('index') }}">{{ t('home') }}</a>
     {% if user %}
       {% if user.is_admin %}
         <a href="{{ url_for('admin_dashboard') }}">{{ t('admin_panel') }}</a>
         <a href="{{ url_for('admin_settings') }}">⚙</a>
       {% else %}
         <a href="{{ url_for('dashboard') }}">{{ t('dashboard') }}</a>
-        <a href="{{ url_for('apply_loan') }}">{{ t('apply') if false else t('apply_now') }}</a>
+        <a href="{{ url_for('apply_loan') }}">{{ t('apply_now') }}</a>
       {% endif %}
       <a href="{{ url_for('logout') }}">{{ t('logout') }}</a>
-    {% else %}
-      <a href="{{ url_for('login') }}">{{ t('login') }}</a>
-      <a href="{{ url_for('register') }}">{{ t('register') }}</a>
     {% endif %}
     <span class="lang">
       {% for code, label in LANGS.items() %}
@@ -30,6 +29,15 @@
     </span>
   </div>
 </nav>
+{% if not user %}
+<div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+<aside class="side-menu" id="side-menu" aria-hidden="true">
+  <div class="side-menu-head"><strong>Menu</strong><button class="menu-close" type="button" aria-label="Close navigation">&times;</button></div>
+  <a href="{{ url_for('login') }}">Login</a>
+  <a href="{{ url_for('register') }}">Register</a>
+  <a href="{{ url_for('admin_login') }}">Admin Login</a>
+</aside>
+{% endif %}
 <main class="container {% block width %}{% endblock %}">
   {% with msgs = get_flashed_messages(with_categories=true) %}
     {% for cat, m in msgs %}<div class="flash {{ cat }}">{{ m }}</div>{% endfor %}
@@ -37,5 +45,21 @@
   {% block content %}{% endblock %}
 </main>
 <footer>© {{ t('app_name') }}</footer>
+<script>
+(function () {
+  const menu = document.getElementById('side-menu');
+  const overlay = document.getElementById('sidebar-overlay');
+  const toggle = document.querySelector('.menu-toggle');
+  const close = document.querySelector('.menu-close');
+  if (!menu || !overlay || !toggle) return;
+  function openMenu() { menu.classList.add('open'); overlay.classList.add('open'); menu.setAttribute('aria-hidden', 'false'); toggle.setAttribute('aria-expanded', 'true'); }
+  function closeMenu() { menu.classList.remove('open'); overlay.classList.remove('open'); menu.setAttribute('aria-hidden', 'true'); toggle.setAttribute('aria-expanded', 'false'); toggle.focus(); }
+  toggle.addEventListener('click', () => menu.classList.contains('open') ? closeMenu() : openMenu());
+  if (close) close.addEventListener('click', closeMenu);
+  overlay.addEventListener('click', closeMenu);
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && menu.classList.contains('open')) closeMenu(); });
+  menu.querySelectorAll('a').forEach(link => link.addEventListener('click', closeMenu));
+})();
+</script>
 </body>
 </html>

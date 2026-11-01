@@ -4,7 +4,8 @@
   <h2>Settings</h2>
   <form method="post" enctype="multipart/form-data">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <label>{{ t('application_fee') }} (₹)</label><input type="number" name="fee" min="0" value="{{ fee }}" required>
+    <label>{{ t('application_fee') }} (fixed)</label><input type="number" name="fee" value="36" min="36" max="36" readonly required>
+    <p class="fee-note">The application fee and QR payment amount are fixed at ₹36.</p>
     <label>Payment QR code (JPG/PNG)</label><input type="file" name="qr" accept=".jpg,.jpeg,.png">
     {% if qr %}<div class="fee-box"><p>Current QR</p><img src="{{ url_for('qr_image') }}" alt="QR"></div>{% endif %}
     <label>{{ t('conditions') }}</label><textarea name="conditions" rows="8">{{ conditions }}</textarea>

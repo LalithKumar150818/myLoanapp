@@ -4,8 +4,10 @@ import secrets
 import uuid
 from datetime import datetime
 from functools import wraps
+import json
+import urllib.request
 
-from flask import (Flask, abort, flash, g, redirect, render_template, request,
+from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, request,
                    send_from_directory, session, url_for)
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import or_
@@ -222,6 +224,41 @@ def set_lang(code):
     return redirect(request.referrer or url_for("index"))
 
 
+@app.route("/register/send-mobile-otp", methods=["POST"])
+def send_mobile_otp():
+    phone = request.form.get("phone", "").strip()
+    if not re.fullmatch(r"[6-9]\d{9}", phone):
+        return jsonify(ok=False, message="Enter a valid 10-digit Indian mobile number."), 400
+    otp = f"{secrets.randbelow(900000) + 100000:06d}"
+    session["mobile_otp"] = {"phone": phone, "code": otp, "verified": False}
+    sms_gateway = os.environ.get("SMS_GATEWAY_URL")
+    if sms_gateway:
+        try:
+            payload = json.dumps({"phone": phone, "message": f"Your registration OTP is {otp}"}).encode("utf-8")
+            req = urllib.request.Request(sms_gateway, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+            urllib.request.urlopen(req, timeout=10).read()
+        except Exception:
+            return jsonify(ok=False, message="OTP service is temporarily unavailable."), 503
+    elif IS_PRODUCTION:
+        print(f"Registration OTP for {phone}: {otp} (configure SMS_GATEWAY_URL to deliver SMS)")
+    response = {"ok": True, "message": "OTP sent to your mobile number."}
+    if not IS_PRODUCTION and not sms_gateway:
+        response["development_otp"] = otp
+    return jsonify(response)
+
+
+@app.route("/register/verify-mobile-otp", methods=["POST"])
+def verify_mobile_otp():
+    phone = request.form.get("phone", "").strip()
+    code = request.form.get("otp", "").strip()
+    pending = session.get("mobile_otp") or {}
+    if pending.get("phone") != phone or pending.get("code") != code:
+        return jsonify(ok=False, message="The OTP is incorrect or does not match this mobile number."), 400
+    pending["verified"] = True
+    session["mobile_otp"] = pending
+    return jsonify(ok=True, message="Mobile number verified successfully.")
+
+
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
@@ -230,31 +267,35 @@ def register():
         email = request.form.get("email", "").strip().lower()
         pw = request.form.get("password", "")
         pw2 = request.form.get("confirm_password", "")
-        errors = []
+        field_errors = {}
         if len(name) < 2:
-            errors.append("Please enter your name.")
+            field_errors["name"] = "Please enter your name."
         if not re.fullmatch(r"[6-9]\d{9}", phone):
-            errors.append("Enter a valid 10-digit Indian mobile number.")
+            field_errors["phone"] = "Enter a valid 10-digit Indian mobile number."
+        otp_state = session.get("mobile_otp") or {}
+        if not (otp_state.get("phone") == phone and otp_state.get("verified") is True):
+            field_errors["otp"] = "Verify your mobile number with OTP before registration."
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-            errors.append("Enter a valid email address.")
+            field_errors["email"] = "Enter a valid email address."
         if len(pw) < 8:
-            errors.append("Password must be at least 8 characters.")
+            field_errors["password"] = "Password must be at least 8 characters."
         if pw != pw2:
-            errors.append("Passwords do not match.")
-        if User.query.filter(or_(User.email == email, User.phone == phone)).first():
-            errors.append("An account with this email or phone already exists.")
-        if errors:
-            for e in errors:
-                flash(e, "error")
-            return render_template("register.html", form=request.form)
+            field_errors["confirm_password"] = "Passwords do not match."
+        if phone and User.query.filter(or_(User.email == email, User.phone == phone)).first():
+            field_errors.setdefault("email", "An account with this email or phone already exists.")
+        if field_errors:
+            for message in field_errors.values():
+                flash(message, "error")
+            return render_template("register.html", form=request.form, field_errors=field_errors)
         u = User(name=name, phone=phone, email=email, password_hash=generate_password_hash(pw))
         db.session.add(u)
         db.session.commit()
+        session.pop("mobile_otp", None)
         session.clear()
         session["uid"] = u.id
         flash("Account created. Welcome!", "success")
         return redirect(url_for("dashboard"))
-    return render_template("register.html", form={})
+    return render_template("register.html", form={}, field_errors={})
 
 
 def do_login(admin):
@@ -313,45 +354,60 @@ def apply_loan():
         rel_name = f.get("relation_name", "").strip()
         address = f.get("address", "").strip()
         errors = []
+        field_errors = {}
         try:
             amount = int(f.get("loan_amount", ""))
             months = int(f.get("repayment_months", ""))
         except ValueError:
             amount = months = 0
-        if len(name) < 2: errors.append("Enter your name.")
-        if rel_type not in ("S/o", "D/o", "W/o"): errors.append("Select S/o, D/o or W/o.")
-        if len(rel_name) < 2: errors.append("Enter father/husband name.")
-        if len(address) < 10: errors.append("Enter your full address.")
+        if len(name) < 2:
+            errors.append("Enter your name."); field_errors["applicant_name"] = "Enter your name."
+        if rel_type not in ("S/o", "D/o", "W/o"):
+            errors.append("Select S/o, D/o or W/o."); field_errors["relation_type"] = "Select S/o, D/o or W/o."
+        if len(rel_name) < 2:
+            errors.append("Enter father/husband name."); field_errors["relation_name"] = "Enter father/husband name."
+        if len(address) < 10:
+            errors.append("Enter your full address."); field_errors["address"] = "Enter your full address."
         if not MIN_LOAN <= amount <= MAX_LOAN:
-            errors.append(f"Loan amount must be between ₹{MIN_LOAN:,} and ₹{MAX_LOAN:,}.")
+            errors.append(f"Loan amount must be between ₹{MIN_LOAN:,} and ₹{MAX_LOAN:,}."); field_errors["loan_amount"] = "Check the loan amount."
         if not MIN_MONTHS <= months <= MAX_MONTHS:
-            errors.append(f"Repayment period must be {MIN_MONTHS}-{MAX_MONTHS} months.")
+            errors.append(f"Repayment period must be {MIN_MONTHS}-{MAX_MONTHS} months."); field_errors["repayment_months"] = "Check the repayment period."
         if not f.get("agree"):
-            errors.append("You must agree to the conditions.")
-        aadhaar = save_upload(request.files.get("aadhaar"), {"jpg", "jpeg", "png", "pdf"})
-        pan = save_upload(request.files.get("pan"), {"jpg", "jpeg", "png", "pdf"})
-        photo = save_upload(request.files.get("photo"), {"jpg", "jpeg", "png"})
-        payment = save_upload(request.files.get("payment"), {"jpg", "jpeg", "png"})
-        if not aadhaar: errors.append("Upload a valid Aadhaar file (JPG, PNG or PDF).")
-        if not pan: errors.append("Upload a valid PAN file (JPG, PNG or PDF).")
-        if not photo: errors.append("Upload a valid photo (JPG or PNG).")
-        if not payment: errors.append("Upload the payment screenshot (JPG or PNG).")
+            errors.append("You must agree to the conditions."); field_errors["agree"] = "You must agree to the conditions."
+        uploaded = session.setdefault("pending_application_files", {})
+        document_fields = (
+            ("aadhaar", {"jpg", "jpeg", "png", "pdf"}, "Upload a valid Aadhaar file (JPG, PNG or PDF)."),
+            ("pan", {"jpg", "jpeg", "png", "pdf"}, "Upload a valid PAN file (JPG, PNG or PDF)."),
+            ("photo", {"jpg", "jpeg", "png"}, "Upload a valid photo (JPG or PNG)."),
+            ("payment", {"jpg", "jpeg", "png"}, "Upload the payment screenshot (JPG or PNG)."),
+        )
+        saved_files = {}
+        field_errors = {}
+        for field, allowed, error_message in document_fields:
+            saved = save_upload(request.files.get(field), allowed)
+            if saved:
+                uploaded[field] = saved
+                session["pending_application_files"] = uploaded
+            if not uploaded.get(field):
+                errors.append(error_message)
+                field_errors[field] = error_message
+            saved_files[field] = uploaded.get(field)
         if errors:
-            for n in (aadhaar, pan, photo, payment):  # clean up files saved before failure
-                if n:
-                    try: os.remove(os.path.join(UPLOAD_DIR, n))
-                    except OSError: pass
             for e in errors:
                 flash(e, "error")
-            return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form=f)
+            return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form=f,
+                                   field_errors=field_errors, uploaded_files=uploaded)
+        aadhaar, pan, photo, payment = (saved_files[n] for n in ("aadhaar", "pan", "photo", "payment"))
         db.session.add(Application(
             user_id=g.user.id, applicant_name=name, relation_type=rel_type, relation_name=rel_name,
             address=address, loan_amount=amount, repayment_months=months, aadhaar_file=aadhaar,
             pan_file=pan, photo_file=photo, payment_file=payment, fee_amount=fee))
         db.session.commit()
+        session.pop("pending_application_files", None)
         flash("Application submitted successfully!", "success")
         return redirect(url_for("dashboard"))
-    return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form={})
+    return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form={},
+                           field_errors={}, uploaded_files=session.get("pending_application_files", {}))
 
 
 @app.route("/files/<name>")
@@ -412,9 +468,8 @@ def admin_application(app_id):
 @admin_required
 def admin_settings():
     if request.method == "POST":
-        fee = request.form.get("fee", "").strip()
-        if fee.isdigit() and 0 <= int(fee) <= 100000:
-            set_setting("fee", fee)
+        fee = "36"
+        set_setting("fee", fee)
         set_setting("conditions", request.form.get("conditions", "").strip()[:5000])
         qr = save_upload(request.files.get("qr"), {"jpg", "jpeg", "png"})
         if request.files.get("qr") and request.files["qr"].filename and not qr:
