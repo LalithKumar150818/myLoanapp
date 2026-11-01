@@ -34,15 +34,18 @@ def csrf_token(client):
 def verify_registration_otp(client, token, phone):
     response = client.post("/register/send-mobile-otp", data={"_csrf": token, "phone": phone})
     assert response.status_code == 200
-    otp = application.LAST_DEVELOPMENT_SMS_OTP
-    assert otp is not None
-    response = client.post("/register/verify-mobile-otp", data={"_csrf": token, "phone": phone, "otp": otp})
+    response = client.post("/register/verify-mobile-otp", data={
+        "_csrf": token,
+        "phone": phone,
+        "firebase_id_token": "test-firebase-token",
+    })
     assert response.status_code == 200
 
 
 @pytest.fixture()
 def app_instance(tmp_path):
     application.app.config.update(TESTING=True)
+    application.app.config.update(FIREBASE_TESTING=True)
     application.UPLOAD_DIR = str(tmp_path)
 
     with application.app.app_context():
@@ -84,6 +87,7 @@ def test_registration_and_login(client):
         "email": "test.user@example.com",
         "password": "TestPassword123!",
         "confirm_password": "TestPassword123!",
+        "firebase_id_token": "test-firebase-token",
     })
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/dashboard")
@@ -114,6 +118,32 @@ def test_invalid_login_credentials_are_rejected(client):
     assert b"Invalid credentials." in response.data
 
 
+def test_registration_requires_phone_verification(client):
+    token = csrf_token(client)
+    response = client.post("/register", data={
+        "_csrf": token,
+        "name": "Unverified User",
+        "phone": "9876543212",
+        "email": "unverified@example.com",
+        "password": "Password123!",
+        "confirm_password": "Password123!",
+        "firebase_id_token": "",
+    })
+    assert response.status_code == 200
+    assert b"Verify your mobile number with OTP before registration." in response.data
+
+
+def test_invalid_phone_is_rejected_by_send_endpoint(client):
+    token = csrf_token(client)
+    response = client.post("/register/send-mobile-otp", data={
+        "_csrf": token,
+        "phone": "123",
+        "country_code": "+91",
+    })
+    assert response.status_code == 400
+    assert response.get_json()["message"] == "Invalid mobile number. Please enter a valid number."
+
+
 def test_unauthenticated_user_cannot_access_admin_dashboard(client):
     response = client.get("/admin")
     assert response.status_code == 302
@@ -130,6 +160,7 @@ def test_registered_user_cannot_access_admin_dashboard(client):
         "email": "regular.user@example.com",
         "password": "TestPassword123!",
         "confirm_password": "TestPassword123!",
+        "firebase_id_token": "test-firebase-token",
     })
     assert response.status_code == 302
 

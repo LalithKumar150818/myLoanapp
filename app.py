@@ -155,6 +155,65 @@ OTP_EXPIRY_SECONDS = 300
 OTP_RESEND_SECONDS = 60
 OTP_MAX_ATTEMPTS = 5
 LAST_DEVELOPMENT_SMS_OTP = None
+firebase_auth = None
+
+
+def get_firebase_auth():
+    global firebase_auth
+    if firebase_auth is not None:
+        return firebase_auth
+
+    try:
+        import firebase_admin
+        from firebase_admin import auth, credentials
+        if not firebase_admin._apps:
+            service_account_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+            service_account_path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH")
+            if service_account_json:
+                credential = credentials.Certificate(json.loads(service_account_json))
+            elif service_account_path and os.path.isfile(service_account_path):
+                credential = credentials.Certificate(service_account_path)
+            else:
+                credential = credentials.ApplicationDefault()
+            firebase_admin.initialize_app(credential, {"projectId": os.environ.get("FIREBASE_PROJECT_ID", "loanmobileapp-4bc94")})
+        firebase_auth = auth
+        return firebase_auth
+    except Exception as error:
+        app.logger.error("Firebase Admin could not be initialized: %s", error)
+        return None
+
+
+def normalize_e164(value, default_country="+91"):
+    raw = (value or "").strip()
+    if raw.startswith("+"):
+        normalized = "+" + re.sub(r"\D", "", raw)
+    else:
+        digits = re.sub(r"\D", "", raw)
+        country_digits = re.sub(r"\D", "", default_country or "+91")
+        normalized = "+" + country_digits + digits
+    if re.fullmatch(r"\+\d{8,15}", normalized):
+        return normalized
+    return None
+
+
+def verify_firebase_id_token(id_token, expected_phone):
+    if not id_token:
+        return None, "Phone verification is required."
+    if app.config.get("FIREBASE_TESTING") and id_token == "test-firebase-token":
+        return {"phone_number": expected_phone}, None
+    auth_module = get_firebase_auth()
+    if auth_module is None:
+        return None, "Phone verification service is unavailable."
+    try:
+        claims = auth_module.verify_id_token(id_token, check_revoked=True)
+    except Exception as error:
+        app.logger.warning("Firebase ID token verification failed: %s", error)
+        return None, "Phone verification could not be confirmed. Please verify the OTP again."
+
+    verified_phone = claims.get("phone_number")
+    if verified_phone != expected_phone:
+        return None, "The verified phone number does not match this registration number."
+    return claims, None
 
 
 def normalize_indian_mobile(value):
@@ -307,53 +366,41 @@ def set_lang(code):
 
 @app.route("/register/send-mobile-otp", methods=["POST"])
 def send_mobile_otp():
-    phone = normalize_indian_mobile(request.form.get("phone", ""))
+    phone = normalize_e164(request.form.get("phone", ""), request.form.get("country_code", "+91"))
     if not phone:
         return jsonify(ok=False, field="phone", message="Invalid mobile number. Please enter a valid number."), 400
 
     now = time.time()
-    pending = session.get("mobile_otp") or {}
-    if pending.get("phone") == phone and now < pending.get("resend_at", 0):
-        retry_after = max(1, int(pending["resend_at"] - now))
+    attempts = [timestamp for timestamp in session.get("firebase_otp_requests", []) if now - timestamp < 3600]
+    if len(attempts) >= 5:
+        return jsonify(ok=False, message="Too many OTP requests. Please try again later."), 429
+    resend_at = session.get("firebase_otp_resend_at", 0)
+    if now < resend_at:
+        retry_after = max(1, int(resend_at - now))
         return jsonify(ok=False, message=f"Please wait {retry_after} seconds before requesting another OTP.", retry_after=retry_after), 429
-
-    otp = f"{secrets.randbelow(900000) + 100000:06d}"
-    try:
-        send_sms(phone, f"Your Loan Mobile App verification OTP is {otp}. It expires in 5 minutes. Do not share it with anyone.")
-    except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError, TimeoutError, json.JSONDecodeError) as error:
-        app.logger.error("SMS delivery failed for mobile verification: %s", error)
-        return jsonify(ok=False, message="We could not send the OTP. Please try again shortly."), 503
-
+    attempts.append(now)
+    session["firebase_otp_requests"] = attempts[-5:]
+    session["firebase_otp_resend_at"] = now + OTP_RESEND_SECONDS
     session["mobile_otp"] = {
         "phone": phone,
-        "hash": otp_digest(phone, otp),
         "verified": False,
-        "expires_at": now + OTP_EXPIRY_SECONDS,
         "resend_at": now + OTP_RESEND_SECONDS,
-        "attempts": 0,
     }
-    return jsonify(ok=True, message="OTP sent successfully. Please check your mobile.", resend_after=OTP_RESEND_SECONDS, expires_in=OTP_EXPIRY_SECONDS)
+    return jsonify(ok=True, message="Firebase OTP request authorized.", resend_after=OTP_RESEND_SECONDS)
 
 
 @app.route("/register/verify-mobile-otp", methods=["POST"])
 def verify_mobile_otp():
-    phone = normalize_indian_mobile(request.form.get("phone", ""))
-    code = request.form.get("otp", "").strip()
+    phone = normalize_e164(request.form.get("phone", ""), request.form.get("country_code", "+91"))
+    id_token = request.form.get("firebase_id_token", "").strip()
+    if not phone:
+        return jsonify(ok=False, field="phone", message="Invalid mobile number. Please enter a valid number."), 400
+    _, error = verify_firebase_id_token(id_token, phone)
+    if error:
+        return jsonify(ok=False, message=error), 400
     pending = session.get("mobile_otp") or {}
-    if not phone or pending.get("phone") != phone:
-        return jsonify(ok=False, message="The OTP is incorrect or does not match this mobile number."), 400
-    if not re.fullmatch(r"\d{6}", code):
-        return jsonify(ok=False, message="Enter the complete 6-digit OTP."), 400
-    if time.time() >= pending.get("expires_at", 0):
-        return jsonify(ok=False, message="The OTP has expired. Please request a new OTP.", expired=True), 400
-    if pending.get("attempts", 0) >= OTP_MAX_ATTEMPTS:
-        return jsonify(ok=False, message="Too many incorrect attempts. Please request a new OTP.", expired=True), 429
-    if not hmac.compare_digest(pending.get("hash", ""), otp_digest(phone, code)):
-        pending["attempts"] = pending.get("attempts", 0) + 1
-        session["mobile_otp"] = pending
-        remaining = OTP_MAX_ATTEMPTS - pending["attempts"]
-        return jsonify(ok=False, message=f"The OTP is incorrect. {remaining} attempts remaining." if remaining else "Too many incorrect attempts. Please request a new OTP."), 400
     pending["verified"] = True
+    pending["phone"] = phone
     session["mobile_otp"] = pending
     return jsonify(ok=True, message="Mobile number verified successfully.")
 
@@ -362,25 +409,32 @@ def verify_mobile_otp():
 def register():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
-        phone = request.form.get("phone", "").strip()
+        submitted_phone = request.form.get("phone", "").strip()
+        country_code = request.form.get("country_code", "+91")
+        phone = normalize_e164(submitted_phone, country_code) if submitted_phone.startswith("+") else normalize_e164(submitted_phone, country_code)
         email = request.form.get("email", "").strip().lower()
         pw = request.form.get("password", "")
         pw2 = request.form.get("confirm_password", "")
         field_errors = {}
         if len(name) < 2:
             field_errors["name"] = "Please enter your name."
-        if not re.fullmatch(r"[6-9]\d{9}", phone):
-            field_errors["phone"] = "Enter a valid 10-digit Indian mobile number."
+        if not phone:
+            field_errors["phone"] = "Invalid mobile number. Please enter a valid number."
         otp_state = session.get("mobile_otp") or {}
         if not (otp_state.get("phone") == phone and otp_state.get("verified") is True):
             field_errors["otp"] = "Verify your mobile number with OTP before registration."
+        verified_claims, firebase_error = verify_firebase_id_token(request.form.get("firebase_id_token", "").strip(), phone)
+        if phone and firebase_error and otp_state.get("verified") is True:
+            field_errors["otp"] = firebase_error
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
             field_errors["email"] = "Enter a valid email address."
         if len(pw) < 8:
             field_errors["password"] = "Password must be at least 8 characters."
         if pw != pw2:
             field_errors["confirm_password"] = "Passwords do not match."
-        if phone and User.query.filter(or_(User.email == email, User.phone == phone)).first():
+        legacy_phone = phone[3:] if phone and phone.startswith("+91") else phone
+        existing_phone_candidates = [phone, legacy_phone]
+        if phone and User.query.filter(or_(User.email == email, User.phone.in_(existing_phone_candidates))).first():
             field_errors.setdefault("email", "An account with this email or phone already exists.")
         if field_errors:
             for message in field_errors.values():
@@ -401,7 +455,10 @@ def do_login(admin):
     if request.method == "POST":
         ident = request.form.get("identifier", "").strip().lower()
         pw = request.form.get("password", "")
-        u = User.query.filter(or_(User.email == ident, User.phone == ident)).first()
+        phone_candidates = [ident, "+" + re.sub(r"\D", "", ident)]
+        if re.fullmatch(r"[6-9]\d{9}", ident):
+            phone_candidates.append("+91" + ident)
+        u = User.query.filter(or_(User.email == ident, User.phone.in_(phone_candidates))).first()
         if u and check_password_hash(u.password_hash, pw) and bool(u.is_admin) == admin:
             session.clear()
             session["uid"] = u.id
