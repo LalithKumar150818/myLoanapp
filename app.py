@@ -2,17 +2,11 @@ import os
 import re
 import secrets
 import uuid
-import hashlib
-import hmac
-import time
 from datetime import datetime
 from functools import wraps
-import json
-import urllib.request
-import urllib.parse
-import urllib.error
 
-from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, request,
+from dotenv import load_dotenv
+from flask import (Flask, abort, flash, g, redirect, render_template, request,
                    send_from_directory, session, url_for)
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import or_
@@ -21,6 +15,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from translations import LANGS, TRANSLATIONS
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=False)
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -132,8 +127,7 @@ def set_setting(key, value):
 
 def init_db():
     db.create_all()
-    if not get_setting("fee"):
-        set_setting("fee", "36")
+    set_setting("fee", "36")
     if not get_setting("conditions"):
         set_setting("conditions", DEFAULT_CONDITIONS)
     if not User.query.filter_by(is_admin=True).first():
@@ -150,39 +144,6 @@ def init_db():
         db.session.commit()
 
 # ---------- Helpers ----------
-OTP_LENGTH = 6
-OTP_EXPIRY_SECONDS = 300
-OTP_RESEND_SECONDS = 60
-OTP_MAX_ATTEMPTS = 5
-LAST_DEVELOPMENT_SMS_OTP = None
-firebase_auth = None
-
-
-def get_firebase_auth():
-    global firebase_auth
-    if firebase_auth is not None:
-        return firebase_auth
-
-    try:
-        import firebase_admin
-        from firebase_admin import auth, credentials
-        if not firebase_admin._apps:
-            service_account_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
-            service_account_path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH")
-            if service_account_json:
-                credential = credentials.Certificate(json.loads(service_account_json))
-            elif service_account_path and os.path.isfile(service_account_path):
-                credential = credentials.Certificate(service_account_path)
-            else:
-                credential = credentials.ApplicationDefault()
-            firebase_admin.initialize_app(credential, {"projectId": os.environ.get("FIREBASE_PROJECT_ID", "loanmobileapp-4bc94")})
-        firebase_auth = auth
-        return firebase_auth
-    except Exception as error:
-        app.logger.error("Firebase Admin could not be initialized: %s", error)
-        return None
-
-
 def normalize_e164(value, default_country="+91"):
     raw = (value or "").strip()
     if raw.startswith("+"):
@@ -196,26 +157,6 @@ def normalize_e164(value, default_country="+91"):
     return None
 
 
-def verify_firebase_id_token(id_token, expected_phone):
-    if not id_token:
-        return None, "Phone verification is required."
-    if app.config.get("FIREBASE_TESTING") and id_token == "test-firebase-token":
-        return {"phone_number": expected_phone}, None
-    auth_module = get_firebase_auth()
-    if auth_module is None:
-        return None, "Phone verification service is unavailable."
-    try:
-        claims = auth_module.verify_id_token(id_token, check_revoked=True)
-    except Exception as error:
-        app.logger.warning("Firebase ID token verification failed: %s", error)
-        return None, "Phone verification could not be confirmed. Please verify the OTP again."
-
-    verified_phone = claims.get("phone_number")
-    if verified_phone != expected_phone:
-        return None, "The verified phone number does not match this registration number."
-    return claims, None
-
-
 def normalize_indian_mobile(value):
     phone = re.sub(r"[\s\-()]", "", (value or "").strip())
     if phone.startswith("+91"):
@@ -223,66 +164,6 @@ def normalize_indian_mobile(value):
     elif phone.startswith("91") and len(phone) == 12:
         phone = phone[2:]
     return phone if re.fullmatch(r"[6-9]\d{9}", phone) else None
-
-
-def otp_digest(phone, code):
-    value = f"{phone}:{code}".encode("utf-8")
-    key = app.config["SECRET_KEY"].encode("utf-8")
-    return hmac.new(key, value, hashlib.sha256).hexdigest()
-
-
-def send_sms(phone, message):
-    global LAST_DEVELOPMENT_SMS_OTP
-    provider = os.environ.get("SMS_PROVIDER", "").strip().lower()
-    if not provider and os.environ.get("SMS_GATEWAY_URL"):
-        provider = "webhook"
-    if not provider and all(os.environ.get(name) for name in (
-        "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"
-    )):
-        provider = "twilio"
-    gateway_phone = "+91" + phone
-
-    if provider == "twilio":
-        account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-        auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-        sender = os.environ.get("TWILIO_FROM_NUMBER")
-        if not all((account_sid, auth_token, sender)):
-            raise RuntimeError("Twilio SMS configuration is incomplete")
-        url = f"https://api.twilio.com/2010-04-01/Accounts/{urllib.parse.quote(account_sid)}/Messages.json"
-        payload = urllib.parse.urlencode({"To": gateway_phone, "From": sender, "Body": message}).encode("utf-8")
-        credentials = f"{account_sid}:{auth_token}".encode("utf-8")
-        import base64
-        authorization = base64.b64encode(credentials).decode("ascii")
-        req = urllib.request.Request(url, data=payload, headers={
-            "Authorization": "Basic " + authorization,
-            "Content-Type": "application/x-www-form-urlencoded",
-        }, method="POST")
-        with urllib.request.urlopen(req, timeout=15) as response:
-            result = json.loads(response.read().decode("utf-8"))
-        if result.get("error_code") or result.get("status") in ("failed", "undelivered"):
-            raise RuntimeError("Twilio rejected the SMS request")
-        return
-
-    sms_gateway = os.environ.get("SMS_GATEWAY_URL")
-    if provider == "webhook" and sms_gateway:
-        payload = json.dumps({
-            "phone": gateway_phone,
-            "mobile": gateway_phone,
-            "message": message,
-        }).encode("utf-8")
-        req = urllib.request.Request(sms_gateway, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=15) as response:
-            response.read()
-        return
-
-    local_development = os.environ.get("OTP_DEV_MODE", "").lower() == "true" or not IS_PRODUCTION
-    if local_development:
-        otp_match = re.search(r"\b\d{6}\b", message)
-        LAST_DEVELOPMENT_SMS_OTP = otp_match.group(0) if otp_match else None
-        print(f"Development OTP SMS to {gateway_phone}: {message}")
-        return
-
-    raise RuntimeError("SMS provider is not configured")
 
 
 @app.before_request
@@ -364,54 +245,14 @@ def set_lang(code):
     return redirect(request.referrer or url_for("index"))
 
 
-@app.route("/register/send-mobile-otp", methods=["POST"])
-def send_mobile_otp():
-    phone = normalize_e164(request.form.get("phone", ""), request.form.get("country_code", "+91"))
-    if not phone:
-        return jsonify(ok=False, field="phone", message="Invalid mobile number. Please enter a valid number."), 400
-
-    now = time.time()
-    attempts = [timestamp for timestamp in session.get("firebase_otp_requests", []) if now - timestamp < 3600]
-    if len(attempts) >= 5:
-        return jsonify(ok=False, message="Too many OTP requests. Please try again later."), 429
-    resend_at = session.get("firebase_otp_resend_at", 0)
-    if now < resend_at:
-        retry_after = max(1, int(resend_at - now))
-        return jsonify(ok=False, message=f"Please wait {retry_after} seconds before requesting another OTP.", retry_after=retry_after), 429
-    attempts.append(now)
-    session["firebase_otp_requests"] = attempts[-5:]
-    session["firebase_otp_resend_at"] = now + OTP_RESEND_SECONDS
-    session["mobile_otp"] = {
-        "phone": phone,
-        "verified": False,
-        "resend_at": now + OTP_RESEND_SECONDS,
-    }
-    return jsonify(ok=True, message="Firebase OTP request authorized.", resend_after=OTP_RESEND_SECONDS)
-
-
-@app.route("/register/verify-mobile-otp", methods=["POST"])
-def verify_mobile_otp():
-    phone = normalize_e164(request.form.get("phone", ""), request.form.get("country_code", "+91"))
-    id_token = request.form.get("firebase_id_token", "").strip()
-    if not phone:
-        return jsonify(ok=False, field="phone", message="Invalid mobile number. Please enter a valid number."), 400
-    _, error = verify_firebase_id_token(id_token, phone)
-    if error:
-        return jsonify(ok=False, message=error), 400
-    pending = session.get("mobile_otp") or {}
-    pending["verified"] = True
-    pending["phone"] = phone
-    session["mobile_otp"] = pending
-    return jsonify(ok=True, message="Mobile number verified successfully.")
-
-
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         submitted_phone = request.form.get("phone", "").strip()
-        country_code = request.form.get("country_code", "+91")
-        phone = normalize_e164(submitted_phone, country_code) if submitted_phone.startswith("+") else normalize_e164(submitted_phone, country_code)
+        phone = normalize_e164(submitted_phone, "+91")
+        if phone and not normalize_indian_mobile(phone):
+            phone = None
         email = request.form.get("email", "").strip().lower()
         pw = request.form.get("password", "")
         pw2 = request.form.get("confirm_password", "")
@@ -420,12 +261,6 @@ def register():
             field_errors["name"] = "Please enter your name."
         if not phone:
             field_errors["phone"] = "Invalid mobile number. Please enter a valid number."
-        otp_state = session.get("mobile_otp") or {}
-        if not (otp_state.get("phone") == phone and otp_state.get("verified") is True):
-            field_errors["otp"] = "Verify your mobile number with OTP before registration."
-        verified_claims, firebase_error = verify_firebase_id_token(request.form.get("firebase_id_token", "").strip(), phone)
-        if phone and firebase_error and otp_state.get("verified") is True:
-            field_errors["otp"] = firebase_error
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
             field_errors["email"] = "Enter a valid email address."
         if len(pw) < 8:
@@ -443,7 +278,6 @@ def register():
         u = User(name=name, phone=phone, email=email, password_hash=generate_password_hash(pw))
         db.session.add(u)
         db.session.commit()
-        session.pop("mobile_otp", None)
         session.clear()
         session["uid"] = u.id
         flash("Account created. Welcome!", "success")
@@ -500,9 +334,16 @@ def dashboard():
 def apply_loan():
     if g.user.is_admin:
         return redirect(url_for("admin_dashboard"))
-    fee = int(get_setting("fee", "36") or 36)
+    set_setting("fee", "36")
+    fee = 36
     qr = get_setting("qr_file")
     conditions = get_setting("conditions", DEFAULT_CONDITIONS)
+    if not qr:
+        if request.method == "POST":
+            flash("Payment cannot start until the administrator uploads the QR code.", "error")
+        return render_template("apply.html", fee=fee, qr=None, conditions=conditions, form=request.form,
+                               field_errors={}, uploaded_files=session.get("pending_application_files", {}),
+                               qr_ready=False, upi_id=get_setting("upi_id", "").strip())
     if request.method == "POST":
         f = request.form
         name = f.get("applicant_name", "").strip()
@@ -563,7 +404,8 @@ def apply_loan():
         flash("Application submitted successfully!", "success")
         return redirect(url_for("dashboard"))
     return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form={},
-                           field_errors={}, uploaded_files=session.get("pending_application_files", {}))
+                           field_errors={}, uploaded_files=session.get("pending_application_files", {}),
+                           qr_ready=True, upi_id=get_setting("upi_id", "").strip())
 
 
 @app.route("/files/<name>")
@@ -627,16 +469,24 @@ def admin_settings():
         fee = "36"
         set_setting("fee", fee)
         set_setting("conditions", request.form.get("conditions", "").strip()[:5000])
+        upi_id = request.form.get("upi_id", "").strip()
+        if upi_id and not re.fullmatch(r"[A-Za-z0-9.\-_]{2,256}@[A-Za-z0-9.\-_]{2,64}", upi_id):
+            flash("Enter a valid UPI ID, such as merchant@bank.", "error")
+            return redirect(url_for("admin_settings"))
+        set_setting("upi_id", upi_id)
         qr = save_upload(request.files.get("qr"), {"jpg", "jpeg", "png"})
         if request.files.get("qr") and request.files["qr"].filename and not qr:
             flash("QR must be a valid JPG or PNG image.", "error")
         elif qr:
             set_setting("qr_file", qr)
+        if not get_setting("qr_file"):
+            flash("A payment QR code is required before saving payment settings.", "error")
+            return redirect(url_for("admin_settings"))
         flash("Settings saved.", "success")
         return redirect(url_for("admin_settings"))
     return render_template("admin_settings.html", fee=get_setting("fee", "36"),
                            conditions=get_setting("conditions", DEFAULT_CONDITIONS),
-                           qr=get_setting("qr_file"))
+                           qr=get_setting("qr_file"), upi_id=get_setting("upi_id", "").strip())
 
 
 with app.app_context():

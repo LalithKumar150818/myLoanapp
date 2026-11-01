@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+import io
 
 import pytest
 
@@ -12,7 +13,6 @@ os.environ["DATABASE_URL"] = "sqlite:///" + TEST_DATABASE_FILE.replace("\\", "/"
 os.environ["SECRET_KEY"] = "test-only-secret-key"
 os.environ["UPLOAD_DIR"] = TEST_STARTUP_UPLOAD_DIR
 os.environ["SESSION_COOKIE_SECURE"] = "false"
-os.environ["OTP_DEV_MODE"] = "true"
 
 import app as application
 
@@ -31,21 +31,9 @@ def csrf_token(client):
         return test_session["_csrf"]
 
 
-def verify_registration_otp(client, token, phone):
-    response = client.post("/register/send-mobile-otp", data={"_csrf": token, "phone": phone})
-    assert response.status_code == 200
-    response = client.post("/register/verify-mobile-otp", data={
-        "_csrf": token,
-        "phone": phone,
-        "firebase_id_token": "test-firebase-token",
-    })
-    assert response.status_code == 200
-
-
 @pytest.fixture()
 def app_instance(tmp_path):
     application.app.config.update(TESTING=True)
-    application.app.config.update(FIREBASE_TESTING=True)
     application.UPLOAD_DIR = str(tmp_path)
 
     with application.app.app_context():
@@ -79,7 +67,6 @@ def test_home_page_returns_successfully(client):
 
 def test_registration_and_login(client):
     token = csrf_token(client)
-    verify_registration_otp(client, token, "9876543210")
     response = client.post("/register", data={
         "_csrf": token,
         "name": "Test User",
@@ -87,7 +74,6 @@ def test_registration_and_login(client):
         "email": "test.user@example.com",
         "password": "TestPassword123!",
         "confirm_password": "TestPassword123!",
-        "firebase_id_token": "test-firebase-token",
     })
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/dashboard")
@@ -118,32 +104,6 @@ def test_invalid_login_credentials_are_rejected(client):
     assert b"Invalid credentials." in response.data
 
 
-def test_registration_requires_phone_verification(client):
-    token = csrf_token(client)
-    response = client.post("/register", data={
-        "_csrf": token,
-        "name": "Unverified User",
-        "phone": "9876543212",
-        "email": "unverified@example.com",
-        "password": "Password123!",
-        "confirm_password": "Password123!",
-        "firebase_id_token": "",
-    })
-    assert response.status_code == 200
-    assert b"Verify your mobile number with OTP before registration." in response.data
-
-
-def test_invalid_phone_is_rejected_by_send_endpoint(client):
-    token = csrf_token(client)
-    response = client.post("/register/send-mobile-otp", data={
-        "_csrf": token,
-        "phone": "123",
-        "country_code": "+91",
-    })
-    assert response.status_code == 400
-    assert response.get_json()["message"] == "Invalid mobile number. Please enter a valid number."
-
-
 def test_unauthenticated_user_cannot_access_admin_dashboard(client):
     response = client.get("/admin")
     assert response.status_code == 302
@@ -152,7 +112,6 @@ def test_unauthenticated_user_cannot_access_admin_dashboard(client):
 
 def test_registered_user_cannot_access_admin_dashboard(client):
     token = csrf_token(client)
-    verify_registration_otp(client, token, "9876543211")
     response = client.post("/register", data={
         "_csrf": token,
         "name": "Regular User",
@@ -160,7 +119,6 @@ def test_registered_user_cannot_access_admin_dashboard(client):
         "email": "regular.user@example.com",
         "password": "TestPassword123!",
         "confirm_password": "TestPassword123!",
-        "firebase_id_token": "test-firebase-token",
     })
     assert response.status_code == 302
 
@@ -231,3 +189,67 @@ def test_customer_dashboard_only_lists_their_application(app_instance, client):
     assert response.status_code == 200
     assert "₹10,000".encode("utf-8") in response.data
     assert "₹20,000".encode("utf-8") not in response.data
+
+
+def test_registration_phone_shows_fixed_country_code(client):
+    response = client.get("/register")
+    assert b"+91" in response.data
+    assert b'name="country_code"' not in response.data
+
+
+def test_admin_can_upload_qr_and_payment_page_is_fixed_at_36(app_instance, client):
+    with app_instance.app_context():
+        admin = application.User(name="QR Admin", phone="9333333333", email="qr.admin@example.com",
+                                 password_hash=application.generate_password_hash("AdminPassword123!"), is_admin=True)
+        application.db.session.add(admin)
+        application.db.session.commit()
+        admin_id = admin.id
+
+    with client.session_transaction() as test_session:
+        test_session["uid"] = admin_id
+
+    token = csrf_token(client)
+    response = client.post("/admin/settings", data={
+        "_csrf": token,
+        "conditions": "Existing conditions",
+        "upi_id": "merchant@bank",
+        "qr": (io.BytesIO(b"\x89PNG\r\n\x1a\nfake-qr-image"), "payment.png"),
+    }, content_type="multipart/form-data")
+    assert response.status_code == 302
+
+    response = client.get("/qr")
+    assert response.status_code == 200
+
+    with app_instance.app_context():
+        user = application.User(name="QR Customer", phone="9444444444", email="qr.customer@example.com",
+                                password_hash=application.generate_password_hash("Password123!"), is_admin=False)
+        application.db.session.add(user)
+        application.db.session.commit()
+        user_id = user.id
+    with client.session_transaction() as test_session:
+        test_session["uid"] = user_id
+
+    response = client.get("/apply")
+    assert response.status_code == 200
+    assert b"\xe2\x82\xb936" in response.data
+    assert b"/qr" in response.data
+    assert b"am=36" in response.data
+
+
+def test_regular_user_cannot_upload_qr(app_instance, client):
+    with app_instance.app_context():
+        user = application.User(name="Regular User", phone="9555555555", email="regular.qr@example.com",
+                                password_hash=application.generate_password_hash("Password123!"), is_admin=False)
+        application.db.session.add(user)
+        application.db.session.commit()
+        user_id = user.id
+    with client.session_transaction() as test_session:
+        test_session["uid"] = user_id
+
+    token = csrf_token(client)
+    response = client.post("/admin/settings", data={
+        "_csrf": token,
+        "qr": (io.BytesIO(b"\x89PNG\r\n\x1a\nfake-qr-image"), "payment.png"),
+    }, content_type="multipart/form-data")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/admin/login")

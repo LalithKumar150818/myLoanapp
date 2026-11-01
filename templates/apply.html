@@ -31,12 +31,15 @@
 
     <div class="fee-box">
       <div>{{ t('application_fee') }}</div>
-      <div class="amt">₹{{ fee }}/-</div>
-      {% if qr %}
+      <div class="amt">₹36</div>
+      {% if qr_ready %}
         <p>{{ t('scan_qr') }}</p>
         <img src="{{ url_for('qr_image') }}" alt="QR">
+        {% if upi_id %}
+        <a class="btn payment-link" href="upi://pay?pa={{ upi_id | urlencode }}&amp;pn=Loan%20Application&amp;am=36&amp;cu=INR">Pay ₹36 with UPI</a>
+        {% endif %}
       {% else %}
-        <p>{{ t('no_qr') }}</p>
+        <p class="payment-unavailable">Payment is not available yet. The administrator must upload a QR code.</p>
       {% endif %}
     </div>
 
@@ -48,7 +51,11 @@
     <div class="cond">{{ conditions }}</div>
     <label style="margin-top:12px"><input type="checkbox" name="agree" value="1" required {{ 'checked' if form.get('agree') }}> {{ t('agree') }}</label>
 
+    {% if qr_ready %}
     <br><button class="btn full">{{ t('submit') }}</button>
+    {% else %}
+    <br><button class="btn full" type="button" disabled>Payment QR not available</button>
+    {% endif %}
   </form>
 </div>
 {% endblock %}

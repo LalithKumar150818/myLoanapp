@@ -61,3 +61,33 @@ select#country-code{margin-bottom:12px}
 .resend-status{color:var(--muted);text-align:right}
 @media(max-width:420px){.resend-status{text-align:left}}
 .container:has(.customer-hero){flex:1;width:100%;margin-top:0;margin-bottom:0;display:flex;align-items:center;justify-content:center}.customer-hero{margin-bottom:0}.customer-hero>*{width:100%}@media(max-height:700px){footer{padding-top:14px;padding-bottom:14px}}
+.phone-input {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.phone-input .country-code {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-right: 1px solid #cbd5e1;
+  font-weight: 700;
+  background: #f8fafc;
+}
+.phone-input input {
+  border: 0;
+  border-radius: 0;
+  flex: 1;
+  min-width: 0;
+}
+.payment-link {
+  display: inline-block;
+  margin-top: 12px;
+}
+.payment-unavailable {
+  color: #b91c1c;
+  font-weight: 600;
+}
