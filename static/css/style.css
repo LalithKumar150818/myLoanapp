@@ -93,6 +93,7 @@ td{padding:11px;border-bottom:1px solid var(--pink-light)}
 .draft-actions .btn.secondary:hover,
 .draft-actions #save-draft:hover{background:var(--pink);color:#fff;box-shadow:0 8px 18px rgba(233,30,99,.22);transform:translateY(-1px)}
 .admin-qr-card{max-width:720px}
+.payment-field-error{margin-top:7px;color:#b91c1c;font-size:.88rem;font-weight:700;line-height:1.35}
 .current-qr-box img{display:block;width:min(280px,100%);max-height:280px;object-fit:contain;margin:10px auto;background:#fff;border-radius:12px}
 @media(max-width:560px){.fee-box{padding:16px 12px}.upi-payment-button{width:100%}}
 .cond{background:var(--pink-soft);border:1.5px dashed var(--pink);border-radius:12px;padding:14px;white-space:pre-line;font-size:.92rem;max-height:200px;overflow:auto}

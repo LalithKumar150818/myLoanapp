@@ -69,6 +69,10 @@
     <label>{{ t('after_payment') }} — {{ t('upload_screenshot') }}</label>
     {% if uploaded_files.get('payment') %}<div class="retained-file">Selected: {{ uploaded_files['payment'] }}</div>{% endif %}
     <input class="{{ 'field-error' if field_errors.get('payment') }}" type="file" name="payment" accept=".jpg,.jpeg,.png" {{ 'required' if not uploaded_files.get('payment') else '' }}>
+    {% if field_errors.get('payment') %}<div class="payment-field-error">{{ field_errors['payment'] }}</div>{% endif %}
+    <label for="transaction-id">UPI Transaction ID</label>
+    <input id="transaction-id" name="transaction_id" class="{{ 'field-error' if field_errors.get('transaction_id') }}" value="{{ form.get('transaction_id', '') }}" required>
+    {% if field_errors.get('transaction_id') %}<div class="payment-field-error">{{ field_errors['transaction_id'] }}</div>{% endif %}
     {% endif %}
     {% else %}
     <p class="saved-message">No registration fee is required for this application because the fee has already been paid for your account.</p>

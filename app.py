@@ -3,6 +3,7 @@ import json
 import re
 import secrets
 import uuid
+import io
 from datetime import datetime, timedelta
 from functools import wraps
 from urllib.parse import quote
@@ -12,8 +13,10 @@ from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_t
                    request, send_from_directory, session, url_for)
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import or_
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from werkzeug.security import check_password_hash, generate_password_hash
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+import pytesseract
 
 from translations import LANGS, TRANSLATIONS
 
@@ -136,6 +139,10 @@ class Payment(db.Model):
     amount = db.Column(db.Integer, nullable=False)
     status = db.Column(db.String(20), default="Pending")
     reference = db.Column(db.String(150), default="")
+    transaction_id = db.Column(db.String(150), unique=True, nullable=True)
+    screenshot_data = db.Column(db.LargeBinary, nullable=True)
+    screenshot_mime = db.Column(db.String(32), nullable=True)
+    payment_verified = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     user = db.relationship("User", backref="payments")
@@ -191,6 +198,18 @@ def ensure_database_columns():
                 connection.exec_driver_sql("ALTER TABLE application ADD COLUMN application_reference VARCHAR(30)")
             if application_columns and "submission_token" not in application_columns:
                 connection.exec_driver_sql("ALTER TABLE application ADD COLUMN submission_token VARCHAR(36)")
+            payment_columns = {
+                row._mapping["name"]
+                for row in connection.exec_driver_sql("PRAGMA table_info(payment)").fetchall()
+            }
+            for column, definition in (
+                ("transaction_id", "VARCHAR(150)"),
+                ("screenshot_data", "BLOB"),
+                ("screenshot_mime", "VARCHAR(32)"),
+                ("payment_verified", "BOOLEAN DEFAULT 0 NOT NULL"),
+            ):
+                if column not in payment_columns:
+                    connection.exec_driver_sql(f"ALTER TABLE payment ADD COLUMN {column} {definition}")
             user_columns = {
                 row._mapping["name"]
                 for row in connection.exec_driver_sql("PRAGMA table_info(user)").fetchall()
@@ -414,6 +433,40 @@ def save_upload(file, allowed):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     file.save(os.path.join(UPLOAD_DIR, name))
     return name
+
+
+def read_payment_screenshot(image_data):
+    try:
+        with Image.open(io.BytesIO(image_data)) as source:
+            image = ImageOps.exif_transpose(source).convert("L")
+            image = ImageOps.autocontrast(image)
+            image = ImageEnhance.Contrast(image).enhance(2.0)
+            image = image.filter(ImageFilter.SHARPEN)
+            return pytesseract.image_to_string(image, config="--psm 6")
+    except Exception as exc:
+        raise RuntimeError("The screenshot could not be read.") from exc
+
+
+def verify_payment_screenshot(image_data, transaction_id, amount, upi_id):
+    ocr_text = read_payment_screenshot(image_data)
+    normalized_transaction = re.sub(r"[^a-z0-9]", "", transaction_id.lower())
+    normalized_upi = re.sub(r"\s+", "", upi_id.lower())
+    compact_text = re.sub(r"[^a-z0-9]", "", ocr_text.lower())
+    normalized_ocr = re.sub(r"[^a-z0-9@._-]", "", ocr_text.lower())
+
+    failures = []
+    if not re.search(r"\b(success|successful|completed|paid)\b", ocr_text, re.I):
+        failures.append("success confirmation text not found")
+    if normalized_transaction and normalized_transaction not in compact_text:
+        failures.append("Transaction ID does not match")
+    normalized_upi_compact = re.sub(r"[^a-z0-9@._-]", "", normalized_upi)
+    if normalized_upi_compact and normalized_upi_compact not in normalized_ocr.replace(" ", ""):
+        failures.append("UPI ID does not match")
+
+    amount_pattern = re.compile(r"(?<!\d)" + re.escape(str(amount)) + r"(?:[.,]00)?(?!\d)")
+    if not amount_pattern.search(ocr_text.replace(",", "")):
+        failures.append(f"amount {amount} does not match")
+    return failures
 
 # ---------- Public / user routes ----------
 @app.route("/")
@@ -739,6 +792,43 @@ def apply_loan():
             errors.append(f"Repayment period must be {MIN_MONTHS}-{MAX_MONTHS} months."); field_errors["repayment_months"] = "Check the repayment period."
         if not f.get("agree"):
             errors.append("You must agree to the conditions."); field_errors["agree"] = "You must agree to the conditions."
+
+        transaction_id = ""
+        payment_screenshot_data = None
+        payment_screenshot_mime = None
+        payment_verification_failures = []
+        if registration_fee_required:
+            transaction_id = f.get("transaction_id", "").strip()
+            screenshot = request.files.get("payment")
+            if not transaction_id:
+                errors.append("Enter the UPI Transaction ID.")
+                field_errors["transaction_id"] = "Enter the UPI Transaction ID."
+            elif Payment.query.filter_by(transaction_id=transaction_id).first():
+                errors.append("This Transaction ID has already been used.")
+                field_errors["transaction_id"] = "This Transaction ID has already been used."
+
+            if screenshot and screenshot.filename:
+                payment_screenshot_data = screenshot.read()
+                screenshot.seek(0)
+                if payment_screenshot_data.startswith(b"\xff\xd8"):
+                    payment_screenshot_mime = "image/jpeg"
+                elif payment_screenshot_data.startswith(b"\x89PNG\r\n\x1a\n"):
+                    payment_screenshot_mime = "image/png"
+                else:
+                    payment_screenshot_mime = None
+                if not payment_screenshot_mime:
+                    errors.append("Invalid payment screenshot")
+                    field_errors["payment"] = "Invalid payment screenshot"
+                else:
+                    try:
+                        payment_verification_failures = verify_payment_screenshot(
+                            payment_screenshot_data, transaction_id, fee,
+                            get_setting("upi_id", "").strip())
+                    except RuntimeError:
+                        payment_verification_failures = ["screenshot text could not be read"]
+                    if payment_verification_failures:
+                        field_errors["payment"] = "Invalid payment screenshot: " + "; ".join(payment_verification_failures)
+                        errors.append(field_errors["payment"])
         uploaded = draft_documents.copy()
         document_fields = (
             ("aadhaar", {"jpg", "jpeg", "png", "pdf"}, "Upload a valid Aadhaar file (JPG, PNG or PDF)."),
@@ -760,7 +850,9 @@ def apply_loan():
             for e in errors:
                 flash(e, "error")
             return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form=f,
-                                   field_errors=field_errors, uploaded_files=uploaded)
+                                   field_errors=field_errors, uploaded_files=uploaded,
+                                   registration_fee_required=registration_fee_required,
+                                   qr_ready=registration_fee_ready, upi_id=get_setting("upi_id", "").strip())
         aadhaar, pan, photo, payment = (saved_files[n] if saved_files.get(n) else uploaded.get(n) for n in ("aadhaar", "pan", "photo", "payment"))
         if not registration_fee_required:
             payment = payment or ""
@@ -780,13 +872,24 @@ def apply_loan():
         loan_application.submission_token = submission_token or uuid.uuid4().hex
         if registration_fee_required:
             g.user.registration_fee_paid = True
-            db.session.add(Payment(
+            payment_record = Payment(
                 user_id=g.user.id, application_id=loan_application.id,
                 payment_type="Registration Fee", amount=fee, status="Pending",
-                reference=loan_application.application_reference))
+                reference=loan_application.application_reference,
+                transaction_id=transaction_id, screenshot_data=payment_screenshot_data,
+                screenshot_mime=payment_screenshot_mime, payment_verified=not payment_verification_failures)
+            db.session.add(payment_record)
         db.session.delete(ApplicationDraft.query.filter_by(user_id=g.user.id).first())
         session.pop("pending_application_files", None)
-        db.session.commit()
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            flash("This Transaction ID has already been used.", "error")
+            return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form=f,
+                                   field_errors={"transaction_id": "This Transaction ID has already been used."},
+                                   uploaded_files=uploaded, registration_fee_required=registration_fee_required,
+                                   qr_ready=registration_fee_ready, upi_id=get_setting("upi_id", "").strip())
         flash(f"Application submitted successfully. Reference: {loan_application.application_reference}.", "success")
         return redirect(url_for("dashboard"))
     return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form={},
