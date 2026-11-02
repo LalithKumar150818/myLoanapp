@@ -33,17 +33,17 @@
     {% if registration_fee_required %}
     <div class="fee-box">
       <div>{{ t('application_fee') }}</div>
-      <div class="amt">₹36</div>
+      <div class="amt">36</div>
       {% if qr_ready %}
         <p>{{ t('scan_qr') }}</p>
         <div class="payment-qr-frame">
-          <img class="payment-qr-image" src="{{ url_for('qr_image') }}" alt="₹36 UPI payment QR code" width="230" height="230" loading="eager" decoding="sync">
+          <img class="payment-qr-image" src="{{ url_for('payment_qr') }}" alt="36 UPI payment QR code" width="230" height="230" loading="eager" decoding="sync">
         </div>
         {% if upi_id %}
         <div class="payment-actions">
           <a class="payment-link upi-payment-button" href="upi://pay?pa={{ upi_id | urlencode }}&amp;pn=Loan%20Application&amp;am=36&amp;cu=INR">
-            <span class="upi-payment-icon" aria-hidden="true">&#8377;</span>
-            <span>Pay ₹36 with UPI</span>
+            <span class="upi-payment-icon" aria-hidden="true">P</span>
+            <span>Pay 36 with UPI</span>
           </a>
         </div>
         {% endif %}

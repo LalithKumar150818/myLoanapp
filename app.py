@@ -8,8 +8,8 @@ from functools import wraps
 from urllib.parse import quote
 
 from dotenv import load_dotenv
-from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, request,
-                   send_from_directory, session, url_for)
+from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_template,
+                   request, send_from_directory, session, url_for)
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import or_
 from sqlalchemy.exc import SQLAlchemyError
@@ -145,6 +145,13 @@ class Payment(db.Model):
 class Setting(db.Model):
     key = db.Column(db.String(50), primary_key=True)
     value = db.Column(db.Text, default="")
+
+
+class PaymentQR(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    image_data = db.Column(db.LargeBinary, nullable=False)
+    mime_type = db.Column(db.String(32), nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 def get_setting(key, default=""):
@@ -682,7 +689,7 @@ def apply_loan():
         return redirect(url_for("admin_dashboard"))
     set_setting("fee", "36")
     fee = 36
-    qr = get_setting("qr_file")
+    qr = db.session.get(PaymentQR, 1)
     conditions = get_setting("conditions", DEFAULT_CONDITIONS)
     draft_data, draft_documents = load_application_draft(g.user)
     if not draft_data:
@@ -727,7 +734,7 @@ def apply_loan():
         if len(address) < 10:
             errors.append("Enter your full address."); field_errors["address"] = "Enter your full address."
         if not MIN_LOAN <= amount <= MAX_LOAN:
-            errors.append(f"Loan amount must be between ₹{MIN_LOAN:,} and ₹{MAX_LOAN:,}."); field_errors["loan_amount"] = "Check the loan amount."
+            errors.append(f"Loan amount must be between {MIN_LOAN:,} and {MAX_LOAN:,}."); field_errors["loan_amount"] = "Check the loan amount."
         if not MIN_MONTHS <= months <= MAX_MONTHS:
             errors.append(f"Repayment period must be {MIN_MONTHS}-{MAX_MONTHS} months."); field_errors["repayment_months"] = "Check the repayment period."
         if not f.get("agree"):
@@ -855,7 +862,7 @@ def edit_application(application_id):
     if len(address) < 10:
         errors.append("Enter your full address."); field_errors["address"] = "Enter your full address."
     if not MIN_LOAN <= amount <= MAX_LOAN:
-        errors.append(f"Loan amount must be between ₹{MIN_LOAN:,} and ₹{MAX_LOAN:,}."); field_errors["loan_amount"] = "Check the loan amount."
+        errors.append(f"Loan amount must be between {MIN_LOAN:,} and {MAX_LOAN:,}."); field_errors["loan_amount"] = "Check the loan amount."
     if not MIN_MONTHS <= months <= MAX_MONTHS:
         errors.append(f"Repayment period must be {MIN_MONTHS}-{MAX_MONTHS} months."); field_errors["repayment_months"] = "Check the repayment period."
     if not f.get("agree"):
@@ -899,16 +906,25 @@ def edit_application(application_id):
     return redirect(url_for("dashboard"))
 
 
-@app.route("/qr")
-@login_required
-def qr_image():
-    name = get_setting("qr_file")
-    if not name:
+@app.route("/payment-qr")
+def payment_qr():
+    qr = db.session.get(PaymentQR, 1)
+    if not qr:
         abort(404)
-    response = send_from_directory(UPLOAD_DIR, name, conditional=True, max_age=0)
+    response = Response(qr.image_data, mimetype=qr.mime_type)
     response.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
+    return response
+
+
+@app.route("/qr")
+def qr_image():
+    qr = db.session.get(PaymentQR, 1)
+    if not qr:
+        abort(404)
+    response = Response(qr.image_data, mimetype=qr.mime_type)
+    response.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate"
     return response
 
 # ---------- Admin routes ----------
@@ -1151,19 +1167,55 @@ def admin_settings():
             flash("Enter a valid UPI ID, such as merchant@bank.", "error")
             return redirect(url_for("admin_settings"))
         set_setting("upi_id", upi_id)
-        qr = save_upload(request.files.get("qr"), {"jpg", "jpeg", "png"})
-        if request.files.get("qr") and request.files["qr"].filename and not qr:
-            flash("QR must be a valid JPG or PNG image.", "error")
-        elif qr:
-            set_setting("qr_file", qr)
-        if not get_setting("qr_file"):
-            flash("A payment QR code is required before saving payment settings.", "error")
-            return redirect(url_for("admin_settings"))
+        uploaded = request.files.get("qr")
+        if uploaded and uploaded.filename:
+            data = uploaded.read()
+            if data.startswith(b"\x89PNG\r\n\x1a\n"):
+                qr = db.session.get(PaymentQR, 1) or PaymentQR(id=1)
+                qr.image_data = data
+                qr.mime_type = "image/png"
+                qr.updated_at = datetime.utcnow()
+                db.session.add(qr)
+                db.session.commit()
         flash("Settings saved.", "success")
         return redirect(url_for("admin_settings"))
     return render_template("admin_settings.html", fee=get_setting("fee", "36"),
                            conditions=get_setting("conditions", DEFAULT_CONDITIONS),
-                           qr=get_setting("qr_file"), upi_id=get_setting("upi_id", "").strip())
+                           upi_id=get_setting("upi_id", "").strip())
+
+
+@app.route("/admin/qr", methods=["GET", "POST"])
+@admin_required
+def admin_qr():
+    if request.method == "POST":
+        uploaded = request.files.get("qr")
+        if not uploaded or not uploaded.filename:
+            flash("Please choose a PNG, JPG, or WEBP QR image.", "error")
+            return redirect(url_for("admin_qr"))
+
+        data = uploaded.read()
+        image_type = uploaded.content_type.lower()
+        if image_type == "image/png" and data.startswith(b"\x89PNG\r\n\x1a\n"):
+            mime_type = "image/png"
+        elif image_type in ("image/jpeg", "image/jpg") and data.startswith(b"\xff\xd8"):
+            mime_type = "image/jpeg"
+        elif image_type == "image/webp" and len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            mime_type = "image/webp"
+        else:
+            flash("QR must be a valid PNG, JPG, or WEBP image.", "error")
+            return redirect(url_for("admin_qr"))
+
+        qr = db.session.get(PaymentQR, 1) or PaymentQR(id=1)
+        qr.image_data = data
+        qr.mime_type = mime_type
+        qr.updated_at = datetime.utcnow()
+        db.session.add(qr)
+        db.session.commit()
+        flash("Payment QR code updated successfully.", "success")
+        return redirect(url_for("admin_qr"))
+
+    qr = db.session.get(PaymentQR, 1)
+    return render_template("admin_qr.html", qr=qr)
 
 
 with app.app_context():

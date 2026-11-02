@@ -89,6 +89,13 @@ td{padding:11px;border-bottom:1px solid var(--pink-light)}
 .login-error-panel h3{margin:0 0 20px;color:var(--text)}
 .login-error-ok{min-width:140px;padding:10px 24px;font-size:16px}
 .file-missing{display:inline-block;padding:12px;border-radius:10px;background:var(--pink-soft);color:var(--muted);font-weight:700}
+.draft-actions{display:flex;align-items:center;justify-content:flex-start;gap:12px;flex-wrap:wrap}
+.draft-actions .btn.secondary,
+.draft-actions #save-draft{width:auto;min-width:130px;padding:10px 22px;font-size:15px;background:#fff;color:var(--pink-dark);border:2px solid var(--pink);border-radius:10px;box-shadow:0 5px 14px rgba(233,30,99,.14);transition:all .2s ease}
+.draft-actions .btn.secondary:hover,
+.draft-actions #save-draft:hover{background:var(--pink);color:#fff;box-shadow:0 8px 18px rgba(233,30,99,.22);transform:translateY(-1px)}
+.admin-qr-card{max-width:720px}
+.current-qr-box img{display:block;width:min(280px,100%);max-height:280px;object-fit:contain;margin:10px auto;background:#fff;border-radius:12px}
 @media(max-width:560px){.fee-box{padding:16px 12px}.upi-payment-button{width:100%}}
 .cond{background:var(--pink-soft);border:1.5px dashed var(--pink);border-radius:12px;padding:14px;white-space:pre-line;font-size:.92rem;max-height:200px;overflow:auto}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px}

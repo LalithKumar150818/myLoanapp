@@ -44,7 +44,7 @@
   <div class="table-wrap"><table>
     <tr><th>Reference</th><th>{{ t('date') }}</th><th>{{ t('amount') }}</th><th>{{ t('repayment_months') }}</th><th>{{ t('status') }}</th><th>{{ t('remarks') }}</th><th>Actions</th></tr>
     {% for a in apps %}
-    <tr><td>{{ a.application_reference or a.id }}</td><td>{{ a.created_at.strftime('%d %b %Y') }}</td><td>₹{{ '{:,}'.format(a.loan_amount) }}</td>
+    <tr><td>{{ a.application_reference or a.id }}</td><td>{{ a.created_at.strftime('%d %b %Y') }}</td><td>{{ '{:,}'.format(a.loan_amount) }}</td>
         <td>{{ a.repayment_months }} {{ t('months') }}</td>
         <td><span class="badge {{ a.status }}">{{ t(a.status.lower().replace(' ','_')) }}</span></td>
         <td>{{ a.admin_remarks or '—' }}</td>

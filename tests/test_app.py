@@ -188,8 +188,8 @@ def test_customer_dashboard_only_lists_their_application(app_instance, client):
         test_session["uid"] = first_id
     response = client.get("/dashboard")
     assert response.status_code == 200
-    assert "₹10,000".encode("utf-8") in response.data
-    assert "₹20,000".encode("utf-8") not in response.data
+    assert "10,000".encode("utf-8") in response.data
+    assert "20,000".encode("utf-8") not in response.data
 
 
 def test_registration_phone_shows_fixed_country_code(client):
@@ -232,8 +232,8 @@ def test_admin_can_upload_qr_and_payment_page_is_fixed_at_36(app_instance, clien
 
     response = client.get("/apply")
     assert response.status_code == 200
-    assert b"\xe2\x82\xb936" in response.data
-    assert b"/qr" in response.data
+    assert b">36<" in response.data
+    assert b"/payment-qr" in response.data
     assert b"am=36" in response.data
 
 
@@ -477,9 +477,9 @@ def test_customer_cannot_edit_another_customers_application(app_instance, client
 
 def test_apply_page_has_only_centered_upi_payment_action(app_instance, client):
     with app_instance.app_context():
-        setting = application.Setting(key="qr_file", value="payment-qr.png")
         upi_setting = application.Setting(key="upi_id", value="merchant@bank")
-        application.db.session.add_all([setting, upi_setting])
+        qr = application.PaymentQR(id=1, image_data=b"\x89PNG\r\n\x1a\nfake-qr-image", mime_type="image/png")
+        application.db.session.add_all([upi_setting, qr])
         customer = application.User(name="Scanner Customer", phone="9550000003",
                                     email="scanner.customer@example.com",
                                     password_hash=application.generate_password_hash("Password123!"))
@@ -493,5 +493,5 @@ def test_apply_page_has_only_centered_upi_payment_action(app_instance, client):
     assert response.status_code == 200
     assert b'id="open-qr-scanner"' not in response.data
     assert b'Scan QR with camera' not in response.data
-    assert b'36 with UPI' in response.data
+    assert b'Pay 36 with UPI' in response.data
     assert b'upi-payment-button' in response.data

@@ -9,9 +9,9 @@
     <dt>{{ a.relation_type }}</dt><dd>{{ a.relation_name }}</dd>
     <dt>Phone / Email</dt><dd>{{ a.user.phone }} / {{ a.user.email }}</dd>
     <dt>Address</dt><dd style="white-space:pre-line">{{ a.address }}</dd>
-    <dt>Loan Amount</dt><dd>₹{{ '{:,}'.format(a.loan_amount) }}</dd>
+    <dt>Loan Amount</dt><dd>{{ '{:,}'.format(a.loan_amount) }}</dd>
     <dt>Repayment</dt><dd>{{ a.repayment_months }} months</dd>
-    <dt>Application Fee</dt><dd>₹{{ a.fee_amount }}</dd>
+    <dt>Application Fee</dt><dd>{{ a.fee_amount }}</dd>
     <dt>Submitted</dt><dd>{{ a.created_at.strftime('%d %b %Y, %H:%M') }} UTC</dd>
   </dl>
 </div>

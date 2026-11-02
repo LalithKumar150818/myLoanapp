@@ -26,7 +26,7 @@
 <div class="table-wrap"><table>
   <tr><th>#</th><th>Applicant</th><th>Phone</th><th>Amount</th><th>Months</th><th>Date</th><th>Status</th><th></th></tr>
   {% for a in apps %}
-  <tr><td>{{ a.id }}</td><td>{{ a.applicant_name }}</td><td>{{ a.user.phone }}</td><td>₹{{ '{:,}'.format(a.loan_amount) }}</td>
+  <tr><td>{{ a.id }}</td><td>{{ a.applicant_name }}</td><td>{{ a.user.phone }}</td><td>{{ '{:,}'.format(a.loan_amount) }}</td>
       <td>{{ a.repayment_months }}</td><td>{{ a.created_at.strftime('%d %b %Y') }}</td>
       <td><span class="badge {{ a.status }}">{{ a.status }}</span></td>
       <td><a class="btn small" href="{{ url_for('admin_application', app_id=a.id) }}">{{ t('view') }}</a></td></tr>

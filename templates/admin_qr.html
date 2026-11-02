@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card admin-qr-card">
+  <h2>Payment QR Code</h2>
+  <p>Upload a PNG, JPG, or WEBP image. The QR is stored in the database and shown to users at payment time.</p>
+
+  {% if qr %}
+  <div class="fee-box current-qr-box">
+    <p><strong>Current QR</strong></p>
+    <img src="{{ url_for('payment_qr') }}?v={{ qr.updated_at.timestamp() }}" alt="Current payment QR">
+  </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label for="qr">Payment QR image</label>
+    <input id="qr" type="file" name="qr" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" required>
+    <br><button class="btn" type="submit">{{ 'Replace QR Code' if qr else 'Upload QR Code' }}</button>
+  </form>
+</div>
+{% endblock %}

@@ -5,11 +5,9 @@
   <form method="post" enctype="multipart/form-data">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <label>{{ t('application_fee') }} (fixed)</label><input type="number" name="fee" value="36" min="36" max="36" readonly required>
-    <p class="fee-note">The application fee and QR payment amount are fixed at ₹36.</p>
-    <label>Payment QR code (JPG/PNG){{ '' if qr else ' - required' }}</label>
-    <input type="file" name="qr" accept=".jpg,.jpeg,.png" {{ 'required' if not qr else '' }}>
-    {% if qr %}<div class="fee-box"><p>Current QR</p><img src="{{ url_for('qr_image') }}" alt="QR"></div>{% endif %}
-    <label>UPI ID (optional, enables a one-tap ₹36 payment link)</label>
+    <p class="fee-note">The application fee and QR payment amount are fixed at 36.</p>
+    <p><a class="btn small" href="{{ url_for('admin_qr') }}">Manage Payment QR</a></p>
+    <label>UPI ID (optional, enables a one-tap 36 payment link)</label>
     <input name="upi_id" value="{{ upi_id }}" placeholder="merchant@bank">
     <label>{{ t('conditions') }}</label><textarea name="conditions" rows="8">{{ conditions }}</textarea>
     <br><button class="btn">Save</button>
