@@ -102,7 +102,7 @@ def test_invalid_login_credentials_are_rejected(client):
         "password": "WrongPassword123!",
     })
     assert response.status_code == 200
-    assert b"Invalid credentials." in response.data
+    assert b"Invalid username or password" in response.data
 
 
 def test_unauthenticated_user_cannot_access_admin_dashboard(client):

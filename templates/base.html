@@ -40,7 +40,18 @@
 {% endif %}
 <main class="container {% block width %}{% endblock %}">
   {% with msgs = get_flashed_messages(with_categories=true) %}
-    {% for cat, m in msgs %}<div class="flash {{ cat }}">{{ m }}</div>{% endfor %}
+    {% for cat, m in msgs %}
+      {% if cat == 'login_error' %}
+        <div class="login-error-modal" role="dialog" aria-modal="true" aria-labelledby="login-error-title">
+          <div class="login-error-panel">
+            <h3 id="login-error-title">{{ m }}</h3>
+            <button type="button" class="btn login-error-ok">OK</button>
+          </div>
+        </div>
+      {% else %}
+        <div class="flash {{ cat }}">{{ m }}</div>
+      {% endif %}
+    {% endfor %}
   {% endwith %}
   {% block content %}{% endblock %}
 </main>
@@ -79,6 +90,11 @@ document.querySelectorAll('.password-toggle').forEach(function (button) {
     button.setAttribute('aria-label', button.title);
     button.innerHTML = eyeIcon(showing);
   });
+});
+
+document.querySelectorAll('.login-error-modal').forEach(function (modal) {
+  var ok = modal.querySelector('.login-error-ok');
+  if (ok) ok.addEventListener('click', function () { modal.remove(); });
 });
 </script>
 </body>

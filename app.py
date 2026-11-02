@@ -19,7 +19,7 @@ from translations import LANGS, TRANSLATIONS
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=False)
-UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
+UPLOAD_DIR = os.path.abspath(os.environ.get("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads")))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 IS_PRODUCTION = (
@@ -338,7 +338,8 @@ def inject():
         return TRANSLATIONS.get(lang, {}).get(key) or TRANSLATIONS["en"].get(key, key)
 
     return dict(t=t, csrf_token=session["_csrf"], user=g.user, lang=lang, LANGS=LANGS,
-                now=datetime.utcnow(), country_choices=COUNTRY_CODES)
+                now=datetime.utcnow(), country_choices=COUNTRY_CODES,
+                file_exists=lambda name: bool(name) and os.path.isfile(os.path.join(UPLOAD_DIR, name)))
 
 
 def login_required(f):
@@ -403,6 +404,7 @@ def save_upload(file, allowed):
     if not head.startswith(SIGNATURES[ext]):
         return None
     name = f"{uuid.uuid4().hex}.{ext}"
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
     file.save(os.path.join(UPLOAD_DIR, name))
     return name
 
@@ -478,7 +480,7 @@ def do_login(admin):
             session.clear()
             session["uid"] = u.id
             return redirect(url_for("admin_dashboard" if admin else "dashboard"))
-        flash("Invalid credentials.", "error")
+        flash("Invalid username or password", "login_error")
     return render_template("login.html", admin=admin)
 
 
@@ -535,8 +537,8 @@ def change_password():
     if request.method == "POST":
         password = request.form.get("password", "")
         confirm_password = request.form.get("confirm_password", "")
-        if len(password) < 8:
-            flash("Password must be at least 8 characters.", "error")
+        if len(password) < 12:
+            flash("Password must be at least 12 characters.", "error")
         elif password != confirm_password:
             flash("Passwords do not match.", "error")
         elif check_password_hash(g.user.password_hash, password):
@@ -797,6 +799,8 @@ def files(name):
                 Application.photo_file == name, Application.payment_file == name)).first()
         if not owns:
             abort(404)
+    if not os.path.isfile(os.path.join(UPLOAD_DIR, name)):
+        return render_template("file_missing.html", filename=name), 404
     return send_from_directory(UPLOAD_DIR, name)
 
 

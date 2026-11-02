@@ -20,8 +20,13 @@
   <div class="docs">
     {% for label, f in [('Photo', a.photo_file), ('Aadhaar', a.aadhaar_file), ('PAN', a.pan_file), ('Payment Screenshot', a.payment_file)] %}
     <div><b>{{ label }}</b><br>
-      {% if f.endswith('.pdf') %}<a class="btn small" target="_blank" href="{{ url_for('files', name=f) }}">Open PDF</a>
-      {% else %}<a target="_blank" href="{{ url_for('files', name=f) }}"><img src="{{ url_for('files', name=f) }}" alt="{{ label }}"></a>{% endif %}
+      {% if not file_exists(f) %}
+        <div class="file-missing">Document unavailable - file is missing.</div>
+      {% elif f.endswith('.pdf') %}
+        <a class="btn small" target="_blank" rel="noopener" href="{{ url_for('files', name=f) }}">Open PDF</a>
+      {% else %}
+        <a target="_blank" rel="noopener" href="{{ url_for('files', name=f) }}"><img src="{{ url_for('files', name=f) }}" alt="{{ label }}"></a>
+      {% endif %}
     </div>
     {% endfor %}
   </div>

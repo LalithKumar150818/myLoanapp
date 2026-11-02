@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="text-align:center">
+  <h2>Document unavailable</h2>
+  <p>This document file is missing. Please re-upload it or contact the administrator.</p>
+  {% if user and user.is_admin %}
+  <a class="btn" href="{{ request.referrer or url_for('admin_dashboard') }}">Go back</a>
+  {% else %}
+  <a class="btn" href="{{ url_for('dashboard') }}">Go to dashboard</a>
+  {% endif %}
+</div>
+{% endblock %}

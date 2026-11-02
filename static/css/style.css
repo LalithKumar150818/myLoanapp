@@ -83,6 +83,12 @@ td{padding:11px;border-bottom:1px solid var(--pink-light)}
 .upi-payment-button:active{transform:translateY(0)}
 .upi-payment-button:focus-visible{outline:3px solid rgba(233,30,99,.24);outline-offset:3px}
 .upi-payment-icon{display:grid;width:32px;height:32px;place-items:center;border-radius:50%;background:rgba(255,255,255,.18);font-size:1.12rem;font-weight:800}
+.upi-payment-button{width:auto;min-width:140px;max-width:100%;min-height:0;padding:10px 24px;font-size:16px;margin:0;line-height:1.2}
+.login-error-modal{position:fixed;z-index:3000;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(35,20,26,.72)}
+.login-error-panel{width:min(380px,100%);text-align:center;background:#fff;border-radius:16px;padding:24px;box-shadow:0 16px 50px rgba(0,0,0,.35)}
+.login-error-panel h3{margin:0 0 20px;color:var(--text)}
+.login-error-ok{min-width:140px;padding:10px 24px;font-size:16px}
+.file-missing{display:inline-block;padding:12px;border-radius:10px;background:var(--pink-soft);color:var(--muted);font-weight:700}
 @media(max-width:560px){.fee-box{padding:16px 12px}.upi-payment-button{width:100%}}
 .cond{background:var(--pink-soft);border:1.5px dashed var(--pink);border-radius:12px;padding:14px;white-space:pre-line;font-size:.92rem;max-height:200px;overflow:auto}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px}
