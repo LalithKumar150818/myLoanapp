@@ -4,6 +4,8 @@ import re
 import secrets
 import uuid
 import io
+import logging
+import sys
 from datetime import datetime, timedelta
 from functools import wraps
 from urllib.parse import quote
@@ -11,6 +13,7 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_template,
                    request, send_from_directory, session, url_for)
+from werkzeug.exceptions import HTTPException
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -22,6 +25,16 @@ from translations import LANGS, TRANSLATIONS
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=False)
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
+logger = logging.getLogger("loan_app")
+
 UPLOAD_DIR = os.path.abspath(os.environ.get("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads")))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -70,6 +83,9 @@ app.config.update(
     SESSION_COOKIE_SECURE=(os.environ.get("SESSION_COOKIE_SECURE", "true" if IS_PRODUCTION else "false").lower() == "true"),
 )
 db = SQLAlchemy(app)
+app.logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+for gunicorn_logger in ("gunicorn.error", "gunicorn.access"):
+    logging.getLogger(gunicorn_logger).setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 
 MIN_LOAN, MAX_LOAN = 100, 10000000
 MIN_MONTHS, MAX_MONTHS = 1, 60
@@ -240,6 +256,9 @@ def ensure_database_columns():
             connection.commit()
         else:
             from sqlalchemy import inspect
+            table_names = set(inspect(db.engine).get_table_names())
+            if "application" not in table_names or "user" not in table_names:
+                return
             existing_application_columns = {column["name"] for column in inspect(db.engine).get_columns("application")}
             if "application_reference" not in existing_application_columns:
                 connection.exec_driver_sql("ALTER TABLE application ADD COLUMN application_reference VARCHAR(30)")
@@ -247,6 +266,23 @@ def ensure_database_columns():
                 connection.exec_driver_sql("ALTER TABLE application ADD COLUMN submission_token VARCHAR(36)")
             if "reject_reason" not in existing_application_columns:
                 connection.exec_driver_sql("ALTER TABLE application ADD COLUMN reject_reason TEXT")
+            if "updated_at" not in existing_application_columns:
+                connection.exec_driver_sql("ALTER TABLE application ADD COLUMN updated_at TIMESTAMP")
+                connection.exec_driver_sql("UPDATE application SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)")
+            if "payment" in table_names:
+                existing_payment_columns = {column["name"] for column in inspect(db.engine).get_columns("payment")}
+                for column, definition in (
+                    ("payment_type", "VARCHAR(50)"),
+                    ("reference", "VARCHAR(150)"),
+                    ("transaction_id", "VARCHAR(150)"),
+                    ("screenshot_data", "BYTEA"),
+                    ("screenshot_mime", "VARCHAR(32)"),
+                    ("payment_verified", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                    ("created_at", "TIMESTAMP"),
+                    ("updated_at", "TIMESTAMP"),
+                ):
+                    if column not in existing_payment_columns:
+                        connection.exec_driver_sql(f'ALTER TABLE payment ADD COLUMN "{column}" {definition}')
             existing_user_columns = {column["name"] for column in inspect(db.engine).get_columns("user")}
             if "must_change_password" not in existing_user_columns:
                 connection.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE NOT NULL")
@@ -276,7 +312,11 @@ def init_db():
             admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
             admin_password = os.environ.get("ADMIN_PASSWORD")
             if not admin_email or not admin_password:
-                raise RuntimeError("ADMIN_EMAIL and ADMIN_PASSWORD must be configured before creating a production admin")
+                logger.error(
+                    "Production startup has no admin account: set ADMIN_EMAIL and ADMIN_PASSWORD "
+                    "and restart the service."
+                )
+                return
         else:
             admin_email = os.environ.get("ADMIN_EMAIL", "admin@loanapp.local").strip().lower()
             admin_password = os.environ.get("ADMIN_PASSWORD", "LocalAdmin!12345")
@@ -361,6 +401,24 @@ def secure_headers(resp):
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
     return resp
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(error):
+    if isinstance(error, HTTPException):
+        return error
+    if isinstance(error, SQLAlchemyError):
+        db.session.rollback()
+    logger.exception(
+        "Unhandled application error: method=%s path=%s endpoint=%s",
+        request.method,
+        request.path,
+        request.endpoint or "-",
+    )
+    if app.config.get("TESTING"):
+        raise error
+    return render_template("file_missing.html",
+                           message="An unexpected server error occurred. Please try again later."), 500
 
 
 @app.context_processor
@@ -900,8 +958,9 @@ def apply_loan():
         session.pop("pending_application_files", None)
         try:
             db.session.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             db.session.rollback()
+            logger.exception("Application submission failed because of a database integrity constraint: %s", exc.orig)
             flash("This Transaction ID has already been used.", "error")
             return render_template("apply.html", fee=fee, qr=qr, conditions=conditions, form=f,
                                    field_errors={"transaction_id": "This Transaction ID has already been used."},
@@ -1162,8 +1221,16 @@ def admin_delete_customer(user_id):
     if customer.applications:
         flash("This customer has loan applications and cannot be deleted.", "error")
     else:
-        db.session.delete(customer)
-        db.session.commit()
+        try:
+            Payment.query.filter_by(user_id=customer.id).delete(synchronize_session=False)
+            ApplicationDraft.query.filter_by(user_id=customer.id).delete(synchronize_session=False)
+            db.session.delete(customer)
+            db.session.commit()
+        except SQLAlchemyError:
+            db.session.rollback()
+            logger.exception("Failed to delete customer user_id=%s", customer.id)
+            flash("The customer could not be deleted. Please try again.", "error")
+            return redirect(url_for("admin_register_customers"))
         flash("Customer deleted successfully.", "success")
     return redirect(url_for("admin_register_customers"))
 
@@ -1358,8 +1425,14 @@ def admin_qr():
 
 
 with app.app_context():
-    ensure_database_columns()
-    init_db()
+    try:
+        db.create_all()
+        ensure_database_columns()
+        init_db()
+        logger.info("Database initialization completed successfully")
+    except Exception:
+        logger.exception("Application startup database initialization failed")
+        raise
 
 if __name__ == "__main__":
     app.run(debug=not IS_PRODUCTION)
