@@ -493,5 +493,5 @@ def test_apply_page_has_only_centered_upi_payment_action(app_instance, client):
     assert response.status_code == 200
     assert b'id="open-qr-scanner"' not in response.data
     assert b'Scan QR with camera' not in response.data
-    assert b'Pay 36 with UPI' in response.data
+    assert b'Pay \xe2\x82\xb936 with UPI' in response.data
     assert b'upi-payment-button' in response.data

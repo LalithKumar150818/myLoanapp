@@ -41,9 +41,8 @@
         </div>
         {% if upi_id %}
         <div class="payment-actions">
-          <a class="payment-link upi-payment-button" href="upi://pay?pa={{ upi_id | urlencode }}&amp;pn=Loan%20Application&amp;am=36&amp;cu=INR">
-            <span class="upi-payment-icon" aria-hidden="true">P</span>
-            <span>Pay 36 with UPI</span>
+          <a class="payment-link upi-payment-button" href="upi://pay?pa={{ upi_id | urlencode }}&amp;pn=Loan%20Application&amp;am={{ fee }}&amp;cu=INR">
+            <span>Pay ₹{{ fee }} with UPI</span>
           </a>
         </div>
         {% endif %}
