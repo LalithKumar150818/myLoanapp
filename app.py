@@ -116,11 +116,16 @@ class Application(db.Model):
     payment_file = db.Column(db.String(200), nullable=False)
     fee_amount = db.Column(db.Integer, nullable=False)
     status = db.Column(db.String(20), default="Pending")
+    reject_reason = db.Column(db.Text, nullable=True)
     admin_remarks = db.Column(db.Text, default="")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     application_reference = db.Column(db.String(30), unique=True, nullable=True)
     submission_token = db.Column(db.String(36), unique=True, nullable=True)
+
+    @property
+    def is_locked(self):
+        return (self.status or "").strip().lower() in ("rejected", "approved")
 
 
 class ApplicationDraft(db.Model):
@@ -198,6 +203,8 @@ def ensure_database_columns():
                 connection.exec_driver_sql("ALTER TABLE application ADD COLUMN application_reference VARCHAR(30)")
             if application_columns and "submission_token" not in application_columns:
                 connection.exec_driver_sql("ALTER TABLE application ADD COLUMN submission_token VARCHAR(36)")
+            if application_columns and "reject_reason" not in application_columns:
+                connection.exec_driver_sql("ALTER TABLE application ADD COLUMN reject_reason TEXT")
             payment_columns = {
                 row._mapping["name"]
                 for row in connection.exec_driver_sql("PRAGMA table_info(payment)").fetchall()
@@ -238,6 +245,8 @@ def ensure_database_columns():
                 connection.exec_driver_sql("ALTER TABLE application ADD COLUMN application_reference VARCHAR(30)")
             if "submission_token" not in existing_application_columns:
                 connection.exec_driver_sql("ALTER TABLE application ADD COLUMN submission_token VARCHAR(36)")
+            if "reject_reason" not in existing_application_columns:
+                connection.exec_driver_sql("ALTER TABLE application ADD COLUMN reject_reason TEXT")
             existing_user_columns = {column["name"] for column in inspect(db.engine).get_columns("user")}
             if "must_change_password" not in existing_user_columns:
                 connection.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE NOT NULL")
@@ -696,6 +705,14 @@ def application_reference(application_id):
 def save_application_draft_route():
     if g.user.is_admin:
         abort(403)
+    application_id = request.form.get("application_id", type=int)
+    if application_id:
+        application = db.session.get(Application, application_id)
+        if application is None or application.user_id != g.user.id:
+            abort(404)
+        if application.is_locked:
+            flash("This application is locked and cannot be edited.", "error")
+            return jsonify({"success": False, "message": "This application is locked and cannot be edited."}), 403
     uploaded_documents = {}
     document_fields = {
         "aadhaar": {"jpg", "jpeg", "png", "pdf"},
@@ -922,6 +939,9 @@ def edit_application(application_id):
     loan_application = db.session.get(Application, application_id)
     if loan_application is None or loan_application.user_id != g.user.id:
         abort(404)
+    if loan_application.is_locked:
+        flash("This application is locked and cannot be edited.", "error")
+        return redirect(url_for("dashboard"))
 
     existing_files = {
         "aadhaar": loan_application.aadhaar_file,
@@ -1250,12 +1270,28 @@ def admin_application(app_id):
         if status not in STATUSES:
             abort(400)
         a.status = status
+        if status == "Rejected":
+            a.reject_reason = request.form.get("reject_reason", "").strip()[:1000] or None
         a.admin_remarks = request.form.get("remarks", "").strip()[:1000]
         a.updated_at = datetime.utcnow()
         db.session.commit()
         flash("Application updated.", "success")
         return redirect(url_for("admin_application", app_id=a.id))
     return render_template("admin_application.html", a=a, statuses=STATUSES)
+
+
+@app.route("/admin/applications/<int:application_id>/reject", methods=["POST"])
+@admin_required
+def reject_application(application_id):
+    application = db.session.get(Application, application_id)
+    if application is None:
+        abort(404)
+    application.status = "Rejected"
+    application.reject_reason = request.form.get("reject_reason", "").strip()[:1000] or None
+    application.updated_at = datetime.utcnow()
+    db.session.commit()
+    flash("Application rejected and locked.", "success")
+    return redirect(url_for("admin_application", app_id=application_id))
 
 
 @app.route("/admin/settings", methods=["GET", "POST"])

@@ -174,5 +174,6 @@ select#country-code{margin-bottom:12px}
 .customer-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .customer-actions form{margin:0}
 .customer-actions .btn{margin:0;white-space:nowrap}
+.rejection-reason,.readonly-label{color:#b91c1c;font-weight:700}
 .generated-password-field{max-width:320px;margin:8px 0}
 @media(max-width:560px){.password-toggle{min-height:38px}.status-actions .btn{flex:1}.inline-actions input{min-width:160px}}

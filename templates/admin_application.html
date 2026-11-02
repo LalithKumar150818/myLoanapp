@@ -40,9 +40,14 @@
     <label>{{ t('remarks') }}</label><textarea name="remarks" rows="3">{{ a.admin_remarks }}</textarea>
     <div class="status-actions">
       <button class="btn" name="action" value="approve">Approve</button>
-      <button class="btn danger" name="action" value="reject">Reject</button>
       <button class="btn secondary" name="action" value="under_review">Under Review</button>
     </div>
+  </form>
+  <form method="post" action="{{ url_for('reject_application', application_id=a.id) }}" class="reject-form" style="margin-top:12px">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label for="reject_reason">Rejection reason (optional)</label>
+    <textarea id="reject_reason" name="reject_reason" rows="3" maxlength="1000" placeholder="Explain why this application was rejected"></textarea>
+    <button class="btn danger" type="submit" onclick="return confirm('Reject this application? It will become permanently read-only for the customer.');">Reject Application</button>
   </form>
 </div>
 {% endblock %}
